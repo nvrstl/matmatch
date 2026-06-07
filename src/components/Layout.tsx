@@ -3,7 +3,7 @@ import Navbar from './Navbar'
 
 export default function Layout() {
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col overflow-x-clip">
       <Navbar />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
         <Outlet />

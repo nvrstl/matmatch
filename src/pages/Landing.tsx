@@ -10,7 +10,9 @@ export default function Landing() {
   const loggedIn = Boolean(session && profile)
 
   return (
-    <div className="-mx-4 -my-8">
+    // Break out of the constrained <main> to span the full viewport width,
+    // while each section keeps its own centered max-w-6xl content.
+    <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] -mt-8 -mb-8 w-screen">
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 z-0">

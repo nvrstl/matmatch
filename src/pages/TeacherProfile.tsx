@@ -331,7 +331,7 @@ export default function TeacherProfile() {
       </section>
 
       {/* Save bar */}
-      <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white/90 p-4 shadow-lg backdrop-blur">
+      <div className="sticky bottom-4 z-10 flex flex-col gap-3 rounded-2xl border border-sand-200 bg-white/90 p-4 shadow-lg backdrop-blur sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm text-ink-700/70">
           {incomplete ? (
             <span className="text-amber-700">

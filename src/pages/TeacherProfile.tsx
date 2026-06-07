@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { CITIES, LANGUAGES, WEEKDAYS, YOGA_STYLES } from '../lib/constants'
 import type { AvailabilitySlot, TeacherProfile as TP } from '../lib/types'
 import { ChipSelect, Field, Spinner } from '../components/ui'
+import AvatarUpload from '../components/AvatarUpload'
 import { shortTime } from '../lib/format'
 
 const EMPTY: Omit<TP, 'id' | 'created_at' | 'updated_at'> = {
@@ -21,7 +22,7 @@ const EMPTY: Omit<TP, 'id' | 'created_at' | 'updated_at'> = {
 }
 
 export default function TeacherProfile() {
-  const { session } = useAuth()
+  const { session, profile } = useAuth()
   const userId = session!.user.id
 
   const [form, setForm] = useState(EMPTY)
@@ -150,6 +151,16 @@ export default function TeacherProfile() {
           {form.is_published ? 'Online' : 'Offline'}
         </span>
       </div>
+
+      {/* Profile photo */}
+      <section className="card p-6">
+        <AvatarUpload
+          userId={userId}
+          name={profile?.full_name ?? ''}
+          photoUrl={form.photo_url}
+          onChange={(url) => set('photo_url', url)}
+        />
+      </section>
 
       {/* Basics */}
       <section className="card space-y-4 p-6">

@@ -22,6 +22,8 @@ schema:
 1. Open your Supabase project → **SQL Editor**.
 2. Paste the entire contents of [`supabase/schema.sql`](supabase/schema.sql) and **Run**.
    (Safe to re-run — it uses `if not exists` / `drop policy if exists`.)
+3. Paste [`supabase/storage.sql`](supabase/storage.sql) and **Run** too — this creates the
+   public `avatars` bucket used for teacher **profile photos**.
 
 ### 2. Turn OFF email confirmation (for the prototype)
 

@@ -58,6 +58,17 @@ test('a genuine race well above training efforts is kept, not treated as an outl
   near(r.predictions.find((p) => p.race === 'half')!.seconds, 5400, 15)
 })
 
+test('old races hold their value while training keeps up, and fade when it drops', () => {
+  const race = run('2026-05-17', 10, 2322, { fastest: { '10k': 2322, '5k': 1150 } }) // 38:42
+  const weeks = (from: string, n: number, kmPerRun: number) =>
+    Array.from({ length: n * 4 }, (_, i) => run(addDays(from, Math.floor(i * 1.75)), kmPerRun, kmPerRun * 300))
+  const kept = [race, ...weeks('2026-04-05', 6, 15), ...weeks('2026-05-20', 22, 17)]
+  const dropped = [race, ...weeks('2026-04-05', 6, 15), ...weeks('2026-05-20', 22, 4)]
+  const tenK = (acts: Activity[]) => predictRaces(acts, [], '2026-10-24').predictions.find((p) => p.race === '10k')!.seconds
+  near(tenK(kept), 2322, 25) // 23 weeks later, still ≈ 38:42
+  assert.ok(tenK(dropped) > tenK(kept) + 45) // volume fell by ~75 %: clearly slower
+})
+
 test('endurance penalty only when training does not support the distance', () => {
   assert.equal(endurancePenalty('half', { weeklyKm: 50, longestRunKm: 20 }, 5000), 0)
   assert.ok(endurancePenalty('half', { weeklyKm: 15, longestRunKm: 8 }, 5000) > 0.04)

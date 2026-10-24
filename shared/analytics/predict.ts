@@ -43,12 +43,31 @@ export function effortsOf(a: Activity): Effort[] {
   return out
 }
 
-/** Detraining discount: none for 4 weeks, then 0.3 %/week. */
-export const recencyFactor = (ageDays: number) => 1 - 0.003 * Math.max(0, ageDays / 7 - 4)
+/**
+ * Detraining discount for an effort `ageDays` old. None for 4 weeks; after that it depends on how
+ * well training kept up: `maintenance` = running hours in the last 6 weeks ÷ the 6 weeks before
+ * the effort (capped at 1). Fully maintained ≈ 0.03 %/week, a 30 % drop ≈ 0.3 %/week.
+ */
+export function recencyFactor(ageDays: number, maintenance = 0.7): number {
+  const rate = 0.003 * Math.min(1.3, Math.max(0.1, (1 - maintenance) / 0.3))
+  return 1 - rate * Math.max(0, ageDays / 7 - 4)
+}
+
+const runHours = (acts: Activity[], end: string, days: number) => {
+  let h = 0
+  for (const a of acts) if (a.sport === 'run' && a.date <= end && daysBetween(a.date, end) < days) h += a.durationS / 3600
+  return h
+}
+
+/** How well running volume has kept up since `effortDate` (1 = fully). */
+export function maintenance(acts: Activity[], effortDate: string, asOf: string): number {
+  const then = runHours(acts, effortDate, 42)
+  return then > 0 ? Math.min(1, runHours(acts, asOf, 42) / then) : 1
+}
 
 export interface TrainingContext {
   weeklyKm: number // average over the last 8 weeks
-  longestRunKm: number // longest single run in the last 10 weeks
+  longestRunKm: number // longest single run in the last 16 weeks
 }
 
 export function trainingContext(acts: Activity[], asOf: string): TrainingContext {
@@ -58,7 +77,7 @@ export function trainingContext(acts: Activity[], asOf: string): TrainingContext
     if (a.sport !== 'run' || a.date > asOf) continue
     const age = daysBetween(a.date, asOf)
     if (age < 56) km8 += a.distanceM / 1000
-    if (age < 70) longest = Math.max(longest, a.distanceM / 1000)
+    if (age < 112) longest = Math.max(longest, a.distanceM / 1000)
   }
   return { weeklyKm: km8 / 8, longestRunKm: longest }
 }
@@ -73,9 +92,10 @@ export function endurancePenalty(race: RaceKey, ctx: TrainingContext, sourceMete
     case '10k':
       return ramp(ctx.longestRunKm, 10, 0.015)
     case 'half':
-      return ramp(ctx.weeklyKm, 40, 0.04) + ramp(ctx.longestRunKm, 18, 0.05)
+      return ramp(ctx.weeklyKm, 35, 0.04) + ramp(ctx.longestRunKm, 16, 0.04)
     case 'marathon':
-      return ramp(ctx.weeklyKm, 70, 0.1) + ramp(ctx.longestRunKm, 32, 0.08)
+      // Calibrated on real results: a 52 km/week, 28 km-long-run block still ran its VDOT.
+      return ramp(ctx.weeklyKm, 55, 0.08) + ramp(ctx.longestRunKm, 30, 0.06)
   }
 }
 
@@ -115,10 +135,13 @@ export function estimateVdot(acts: Activity[], asOf: string, hr: HrContext): Vdo
   const windowStart = addDays(asOf, -365)
   const scored: { e: Effort; score: number }[] = []
   const hrEsts: number[] = []
+  const maint = new Map<string, number>()
   for (const a of acts) {
     if (a.date > asOf || a.date <= windowStart) continue
     const age = daysBetween(a.date, asOf)
-    for (const e of effortsOf(a)) scored.push({ e, score: e.vdot * recencyFactor(age) })
+    const efforts = effortsOf(a)
+    if (efforts.length && !maint.has(a.date)) maint.set(a.date, maintenance(acts, a.date, asOf))
+    for (const e of efforts) scored.push({ e, score: e.vdot * recencyFactor(age, maint.get(a.date)) })
     if (age < 42) {
       const h = hrVdot(a, hr)
       if (h) hrEsts.push(h)
@@ -143,12 +166,21 @@ export function estimateVdot(acts: Activity[], asOf: string, hr: HrContext): Vdo
     return { vdot: hrV!, source: null, hrVdot: hrV, confidence: 'low', notes: [...notes, 'No recent hard efforts; estimate based on heart rate vs. pace only.'] }
   }
   const age = daysBetween(best.e.date, asOf)
-  if (age <= 56 || !hrV) {
-    return { vdot: best.score, source: best.e, hrVdot: hrV, confidence: age <= 56 ? 'high' : 'medium', notes }
+  const confidence = age <= 56 ? 'high' : 'medium'
+  // Races set the floor. Heart rate vs. pace on recent runs can show you've got fitter since
+  // (common in a training block without races), so it may lift the estimate, but by at most 3 %
+  // above your best race so one noisy HR reading can't inflate it.
+  if (hrV && hrV > best.score) {
+    const lifted = Math.min(hrV, best.e.vdot * 1.03)
+    if (lifted > best.score + 0.2) {
+      notes.push(`Recent runs at your heart rate suggest you're fitter than your last hard effort (${best.e.date}), so the estimate is raised a little.`)
+      return { vdot: lifted, source: best.e, hrVdot: hrV, confidence, notes }
+    }
   }
-  // Best effort is old: blend with what your heart rate says about current fitness.
-  notes.push(`Your best effort is ${Math.round(age / 7)} weeks old, so it's blended with a heart-rate-based estimate of current fitness.`)
-  return { vdot: (best.score + hrV) / 2, source: best.e, hrVdot: hrV, confidence: 'medium', notes }
+  if (age > 56 && best.score < best.e.vdot - 0.5) {
+    notes.push(`Your best effort is ${Math.round(age / 7)} weeks old and your running volume has dropped since, so it's discounted a little.`)
+  }
+  return { vdot: best.score, source: best.e, hrVdot: hrV, confidence, notes }
 }
 
 /** Observed resting HR (median of the last 30 days) and max HR (highest plausible value in 2 years). */

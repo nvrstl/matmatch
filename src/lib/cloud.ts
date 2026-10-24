@@ -63,6 +63,8 @@ const ls = {
 interface Meta {
   lastSync: string | null // local date of the last successful sync
   finishedAt: string | null
+  /** An unfinished sync: health data is saved through `doneThrough`, continue from there. */
+  pending?: { from: string; to: string; doneThrough: string | null; activitiesDone: boolean } | null
 }
 
 let dataset: Dataset = emptyDataset()
@@ -112,10 +114,48 @@ export const getKey = () => ls.get(KEY)
 
 const connected = () => window.dispatchEvent(new Event('lifelong:auth'))
 
+/** Shown on the Sync page while waiting for Garmin. */
+let onWait: ((message: string) => void) | null = null
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * One call to /api/garmin, patiently: waits out Garmin's per-minute limit for as long as it asks
+ * (up to 20 minutes in total) and retries brief outages (Garmin hiccups, timeouts, no network).
+ */
 async function call(params: Record<string, string>, headers: Record<string, string>) {
-  const res = await fetch(`/api/garmin?${new URLSearchParams(params)}`, { headers })
-  const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: 'key' | 'token' }
-  return { res, body }
+  let waited = 0
+  for (let outage = 0; ; ) {
+    let res: Response
+    try {
+      res = await fetch(`/api/garmin?${new URLSearchParams(params)}`, { headers })
+    } catch {
+      res = new Response(null, { status: 599 }) // offline or connection dropped
+    }
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string
+      reason?: 'key' | 'token' | 'rate'
+      retryInSeconds?: number
+    }
+    if (res.status === 429 && waited < 20 * 60) {
+      const wait = Math.max(5, Math.min(300, Number(body.retryInSeconds) || 30))
+      for (let left = wait; left > 0; left--) {
+        onWait?.(`Garmin allows a limited number of requests per minute. Continuing in ${left} s…`)
+        await pause(1000)
+      }
+      waited += wait
+      continue
+    }
+    if (res.status >= 500 && outage < 4) {
+      outage++
+      onWait?.(res.status === 599 ? 'No connection, retrying…' : 'Garmin didn’t answer, retrying…')
+      await pause(5000 * 2 ** (outage - 1))
+      continue
+    }
+    if (res.status === 429) {
+      throw new Error('Garmin is limiting requests right now. Your progress is saved; sync again in a few minutes to continue.')
+    }
+    return { res, body }
+  }
 }
 
 /** Exchange the key for a 24h token and keep it; Garmin rate-limits token requests. */
@@ -136,31 +176,20 @@ function savedToken(): string | null {
   }
 }
 
-/** Shown on the Sync page while waiting out Garmin's per-minute limit. */
-let onPause: ((seconds: number) => void) | null = null
-
 async function garmin<T>(params: Record<string, string>): Promise<T> {
   const key = getKey()
   if (!key) throw new Error('Connect your Garmin account first.')
-  let renewed = false
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const token = savedToken() ?? (await newToken(key))
     const { res, body } = await call(params, { 'x-garmin-token': token })
     if (res.ok) return body as T
-    if (res.status === 401 && body.reason === 'token' && !renewed) {
+    if (res.status === 401 && body.reason === 'token' && attempt === 0) {
       ls.set(TOKEN, null) // expired or revoked: get a fresh one and retry once
-      renewed = true
-      continue
-    }
-    if (res.status === 429) {
-      const wait = Math.min(90, Number((body as { retryInSeconds?: number }).retryInSeconds) || 30)
-      onPause?.(wait)
-      await new Promise((r) => setTimeout(r, wait * 1000 + 500))
       continue
     }
     throw new Error(body.error ?? `Request failed (${res.status})`)
   }
-  throw new Error('Garmin is busy. Try syncing again in a few minutes.')
+  throw new Error('Garmin rejected the connection. Reconnect with a new key on the Sync page.')
 }
 
 /** Validate and store a key. A different key than before means a different person: clear the data. */
@@ -201,51 +230,73 @@ export async function sync(full = false): Promise<void> {
     Object.assign(status, { phase, message })
     window.dispatchEvent(new Event('lifelong:sync'))
   }
-  onPause = (seconds) => report('paused', `Garmin allows 100 requests a minute, pausing ${seconds} s…`)
-  try {
-    const incremental = !full && meta.lastSync !== null
-    report('profile', 'Reading your Garmin profile')
-    const profile = await garmin<ProfilePrefs>({ part: 'profile' })
-
-    report('activities', incremental ? `New activities since ${meta.lastSync}` : 'Downloading all activities')
-    const activities = await garmin<Activity[]>({
-      part: 'activities',
-      today,
-      ...(incremental ? { since: addDays(meta.lastSync!, -3) } : {}),
-    })
-    let next = mergeDataset(full ? emptyDataset() : dataset, { activities, profile })
-
-    const first = next.activities[0]?.date ?? addDays(today, -5 * 365)
-    const from = incremental ? addDays(meta.lastSync!, -7) : first
-    const parts = chunks(from, today, 365)
-    for (const [i, [a, b]] of parts.entries()) {
-      report('health', `Health data ${a.slice(0, 4)}${parts.length > 1 ? ` (${i + 1}/${parts.length})` : ''}`)
-      const w = await garmin<Pick<Dataset, 'daily' | 'sleep' | 'hrv' | 'weight'>>({ part: 'wellness', from: a, to: b })
-      next = mergeDataset(next, w)
-    }
-
-    dataset = next
-    meta = { lastSync: today, finishedAt: new Date().toISOString() }
+  const save = async () => {
     await idbSet('dataset', dataset).catch(() => {})
     await idbSet('meta', meta).catch(() => {})
+  }
+  let phase = 'profile'
+  onWait = (message) => report(phase, message)
+  try {
+    if (full) {
+      dataset = emptyDataset()
+      meta = { ...meta, lastSync: null, pending: null }
+    }
+    const resuming = Boolean(meta.pending)
+    const incremental = !resuming && meta.lastSync !== null
+
+    if (!meta.pending?.activitiesDone) {
+      phase = 'activities'
+      report(phase, incremental ? `New activities since ${meta.lastSync}` : 'Downloading all activities')
+      const profile = await garmin<ProfilePrefs>({ part: 'profile' })
+      const activities = await garmin<Activity[]>({
+        part: 'activities',
+        today,
+        ...(incremental ? { since: addDays(meta.lastSync!, -3) } : {}),
+      })
+      dataset = mergeDataset(dataset, { activities, profile })
+      const first = dataset.activities[0]?.date ?? addDays(today, -5 * 365)
+      meta = {
+        ...meta,
+        pending: { from: incremental ? addDays(meta.lastSync!, -7) : first, to: today, doneThrough: null, activitiesDone: true },
+      }
+      await save()
+      changed()
+    }
+
+    const pending = meta.pending!
+    const start = pending.doneThrough ? addDays(pending.doneThrough, 1) : pending.from
+    const parts = start <= today ? chunks(start, today, 365) : []
+    for (const [i, [a, b]] of parts.entries()) {
+      phase = 'health'
+      report(phase, `Health data ${a.slice(0, 4)}${parts.length > 1 ? ` (${i + 1}/${parts.length})` : ''}${resuming ? ', continuing where it stopped' : ''}`)
+      const w = await garmin<Pick<Dataset, 'daily' | 'sleep' | 'hrv' | 'weight'>>({ part: 'wellness', from: a, to: b })
+      dataset = mergeDataset(dataset, w)
+      meta = { ...meta, pending: { ...pending, doneThrough: b } }
+      await save() // an interrupted sync resumes from here
+      changed()
+    }
+
+    meta = { lastSync: today, finishedAt: new Date().toISOString(), pending: null }
+    await save()
     report('done', 'Up to date')
     changed()
   } catch (e) {
     status.error = e instanceof Error ? e.message : String(e)
     report('error', status.error)
   } finally {
+    onWait = null
     status.running = false
     status.finishedAt = new Date().toISOString()
     window.dispatchEvent(new Event('lifelong:sync'))
   }
 }
 
-/** Sync on open when the data is more than 3 hours old. */
+/** Sync on open when the data is more than 3 hours old, or finish an interrupted sync. */
 export async function autoSync() {
   await loaded
   if (!getKey()) return
   const age = meta.finishedAt ? Date.now() - Date.parse(meta.finishedAt) : Infinity
-  if (age > 3 * 3600_000) void sync()
+  if (meta.pending || age > 3 * 3600_000) void sync()
 }
 
 // ---------------------------------------------------------------------------

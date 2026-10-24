@@ -12,9 +12,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export class GarminApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** for 429s: how long Garmin asks to wait */
+  retryInSeconds: number | null
+  constructor(status: number, message: string, retryInSeconds: number | null = null) {
     super(message)
     this.status = status
+    this.retryInSeconds = retryInSeconds
   }
 }
 
@@ -22,17 +25,36 @@ export class GarminClient {
   private token: string | null = null
   private tokenExpires = 0
   private lastRequest = 0
-  private readonly apiKey: string
+  private readonly apiKey: string | null
   /** minimum spacing between requests, ms — be a polite single user */
   private readonly spacingMs: number
+  /** Longer rate-limit pauses than this are thrown (as a 429 GarminApiError) instead of waited out. */
+  maxWaitMs = Number.POSITIVE_INFINITY
 
-  constructor(apiKey: string, spacingMs = 250) {
+  constructor(apiKey: string | null, spacingMs = 250) {
     this.apiKey = apiKey
     this.spacingMs = spacingMs
   }
 
+  /** A client that only has an access token (no key): it can't renew, so a 401 surfaces as an error. */
+  static withToken(token: string, spacingMs = 0): GarminClient {
+    const c = new GarminClient(null, spacingMs)
+    c.maxWaitMs = 5000 // a serverless call can't sit out a minute-long pause; the caller retries
+    c.token = token
+    c.tokenExpires = Number.POSITIVE_INFINITY
+    return c
+  }
+
+  /** Exchange the key for an access token; returns it with its expiry (ms since epoch). */
+  async exchangeKey(): Promise<{ token: string; expiresAt: number }> {
+    this.token = null
+    const token = await this.getToken()
+    return { token, expiresAt: this.tokenExpires }
+  }
+
   private async getToken(retried = false): Promise<string> {
     if (this.token && Date.now() < this.tokenExpires) return this.token
+    if (!this.apiKey) throw new GarminApiError(401, 'The Garmin access token expired.')
     const res = await fetch(TOKEN_URL, {
       method: 'POST',
       // The token comes back as plain text (a JWT); asking for JSON gets 406 Not Acceptable.
@@ -91,8 +113,17 @@ export class GarminClient {
         continue
       }
       if ((res.status === 429 || res.status >= 500) && attempt < 5) {
+        if (process.env.GARMIN_DEBUG) {
+          const hdrs = [...res.headers].filter(([k]) => /rate|retry|limit/i.test(k)).map(([k, v]) => `${k}=${v}`).join(' ')
+          console.log(`[garmin] ${res.status} on ${url.pathname}, retry ${attempt + 1} | ${hdrs} | ${(await res.clone().text()).slice(0, 160)}`)
+        }
+        // Garmin allows ~100 requests a minute per user and says how long to pause.
         const retryAfter = Number(res.headers.get('retry-after'))
-        await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt)
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 2000 * 2 ** attempt
+        if (waitMs > this.maxWaitMs) {
+          throw new GarminApiError(429, 'Garmin asks to slow down for a moment.', Math.ceil(waitMs / 1000))
+        }
+        await sleep(waitMs)
         continue
       }
       const body = await res.text()

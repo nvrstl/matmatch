@@ -1,12 +1,17 @@
-// Vercel serverless function: the hosted app's only server code. It holds the Garmin key
-// (GARMIN_API_KEY env var), checks the app password (APP_PASSWORD env var) and returns one slice
-// of normalized data per call; the browser drives the sync and keeps the data on the device.
+// Vercel serverless function: the hosted app's only server code. Anyone can use the app with
+// their own Garmin Personal API key. The key and data stay on each person's device; this function
+// only relays requests to Garmin (the browser can't call Garmin directly) and stores nothing.
+// It never uses a server-side key, so nobody can read anyone else's data through it.
 //
-//   GET /api/garmin?part=check                        → 204 if the password is right
-//   GET /api/garmin?part=profile
-//   GET /api/garmin?part=activities[&since=YYYY-MM-DD]
+//   GET /api/garmin?part=token        header x-garmin-key   → { token, expiresAt }
+//   GET /api/garmin?part=profile      header x-garmin-token
+//   GET /api/garmin?part=activities&today=YYYY-MM-DD[&since=YYYY-MM-DD]
 //   GET /api/garmin?part=wellness&from=YYYY-MM-DD&to=YYYY-MM-DD   (at most 366 days)
-import { createHash, timingSafeEqual } from 'node:crypto'
+//
+// The browser keeps the 24h token and reuses it, because Garmin rate-limits token requests.
+// A 401 response with { reason: 'token' } means "get a new token"; { reason: 'key' } means the
+// key itself was rejected. A 429 { reason: 'rate', retryInSeconds } means "pause, then retry"
+// (Garmin allows ~100 requests a minute per user).
 import { chunks } from '../shared/chunks.js'
 import { daysBetween } from '../shared/dates.js'
 import { GarminApiError, GarminClient } from '../server/garmin/client.js'
@@ -14,21 +19,12 @@ import { fetchActivities, fetchDaily, fetchHrv, fetchProfile, fetchSleep, fetchW
 
 export const maxDuration = 60
 
-let cached: { key: string; client: GarminClient } | null = null
-
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   })
-
-function passwordOk(given: string | null): boolean {
-  const expected = process.env.APP_PASSWORD
-  if (!expected || !given) return false
-  const h = (s: string) => createHash('sha256').update(s).digest()
-  return timingSafeEqual(h(given), h(expected))
-}
 
 /** Run async jobs with limited concurrency, keeping order. */
 async function pool<T>(jobs: (() => Promise<T>)[], size: number): Promise<T[]> {
@@ -45,21 +41,32 @@ async function pool<T>(jobs: (() => Promise<T>)[], size: number): Promise<T[]> {
   return out
 }
 
-export async function GET(request: Request): Promise<Response> {
-  if (!process.env.APP_PASSWORD) return json({ error: 'APP_PASSWORD is not configured on the server.' }, 503)
-  if (!passwordOk(request.headers.get('x-app-password'))) return json({ error: 'Wrong password.' }, 401)
-  const key = process.env.GARMIN_API_KEY
-  if (!key) return json({ error: 'GARMIN_API_KEY is not configured on the server.' }, 503)
+// A Garmin key or token is a long opaque string; reject anything else before calling Garmin.
+const plausible = (s: string | null): s is string => !!s && s.length >= 20 && s.length <= 4096 && /^[\x21-\x7e]+$/.test(s)
 
+export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
   const part = url.searchParams.get('part')
-  // Reused while this function instance stays warm, so a sync needs only one token request.
-  if (!cached || cached.key !== key) cached = { key, client: new GarminClient(key, 0) }
-  const { client } = cached
+
   try {
+    if (part === 'token') {
+      const key = request.headers.get('x-garmin-key')
+      if (!plausible(key)) return json({ error: 'Paste your Garmin Personal API key.', reason: 'key' }, 400)
+      try {
+        return json(await new GarminClient(key, 0).exchangeKey())
+      } catch (e) {
+        if (e instanceof GarminApiError && (e.status === 401 || e.status === 403)) {
+          return json({ error: 'Garmin rejected this key. Check it, or create a new one in Garmin Connect.', reason: 'key' }, 401)
+        }
+        throw e
+      }
+    }
+
+    const token = request.headers.get('x-garmin-token')
+    if (!plausible(token)) return json({ error: 'Missing Garmin token.', reason: 'token' }, 401)
+    const client = GarminClient.withToken(token)
+
     switch (part) {
-      case 'check':
-        return new Response(null, { status: 204 })
       case 'profile': {
         const p = await fetchProfile(client)
         return json({
@@ -80,15 +87,24 @@ export async function GET(request: Request): Promise<Response> {
         if (!from || !to || !DATE.test(from) || !DATE.test(to) || to < from || daysBetween(from, to) > 366) {
           return json({ error: 'Bad range' }, 400)
         }
-        const rows = <T>(fetcher: (a: string, b: string) => Promise<{ row: T }[]>, days: number) =>
-          chunks(from, to, days).map(([a, b]) => async () => (await fetcher(a, b)).map((r) => r.row))
-        const flat = async <T>(jobs: (() => Promise<T[]>)[]) => (await pool(jobs, 6)).flat()
-        const [daily, sleep, hrv, weight] = await Promise.all([
-          flat(rows((a, b) => fetchDaily(client, a, b), RANGE_DAYS.daily)),
-          flat(rows((a, b) => fetchSleep(client, a, b), RANGE_DAYS.sleep)),
-          flat(rows((a, b) => fetchHrv(client, a, b), RANGE_DAYS.hrv)),
-          flat(rows((a, b) => fetchWeight(client, a, b), RANGE_DAYS.weight)),
-        ])
+        // One shared queue, 4 requests at a time: Garmin answers bigger bursts with 429s.
+        type Rows = { kind: 'daily' | 'sleep' | 'hrv' | 'weight'; rows: unknown[] }
+        const jobs: (() => Promise<Rows>)[] = []
+        const add = <T>(kind: Rows['kind'], fetcher: (a: string, b: string) => Promise<{ row: T }[]>) => {
+          for (const [a, b] of chunks(from, to, RANGE_DAYS[kind])) {
+            jobs.push(async () => ({ kind, rows: (await fetcher(a, b)).map((r) => r.row) }))
+          }
+        }
+        add('daily', (a, b) => fetchDaily(client, a, b))
+        add('sleep', (a, b) => fetchSleep(client, a, b))
+        add('hrv', (a, b) => fetchHrv(client, a, b))
+        add('weight', (a, b) => fetchWeight(client, a, b))
+        const results = await pool(jobs, 4)
+        const of = <T>(kind: Rows['kind']) => results.filter((r) => r.kind === kind).flatMap((r) => r.rows as T[])
+        const daily = of<Awaited<ReturnType<typeof fetchDaily>>[number]['row']>('daily')
+        const sleep = of<Awaited<ReturnType<typeof fetchSleep>>[number]['row']>('sleep')
+        const hrv = of<Awaited<ReturnType<typeof fetchHrv>>[number]['row']>('hrv')
+        const weight = of<Awaited<ReturnType<typeof fetchWeight>>[number]['row']>('weight')
         return json({
           daily: daily.map((d) => ({ date: d.date, steps: d.steps, resting_hr: d.resting_hr, stress_avg: d.stress_avg, bb_max: d.bb_max })),
           sleep: sleep.map((s) => ({ date: s.date, total_s: s.total_s, score: s.score })),
@@ -100,7 +116,10 @@ export async function GET(request: Request): Promise<Response> {
         return json({ error: 'Unknown part' }, 400)
     }
   } catch (e) {
-    const status = e instanceof GarminApiError && e.status === 401 ? 502 : 500
-    return json({ error: e instanceof Error ? e.message : String(e) }, status)
+    if (e instanceof GarminApiError && e.status === 401) return json({ error: 'The Garmin token expired.', reason: 'token' }, 401)
+    if (e instanceof GarminApiError && e.status === 429) {
+      return json({ error: e.message, reason: 'rate', retryInSeconds: e.retryInSeconds ?? 30 }, 429)
+    }
+    return json({ error: e instanceof Error ? e.message : String(e) }, 502)
   }
 }

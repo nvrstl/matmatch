@@ -103,48 +103,89 @@ function current(): Computed {
 }
 
 // ---------------------------------------------------------------------------
-// Password
+// Garmin connection: each person's own key, kept on their device only
 
-export const getPassword = () => ls.get('lifelong:pw')
+const KEY = 'lifelong:garmin-key'
+const TOKEN = 'lifelong:garmin-token'
 
-export class AuthError extends Error {}
+export const getKey = () => ls.get(KEY)
+
+const connected = () => window.dispatchEvent(new Event('lifelong:auth'))
+
+async function call(params: Record<string, string>, headers: Record<string, string>) {
+  const res = await fetch(`/api/garmin?${new URLSearchParams(params)}`, { headers })
+  const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: 'key' | 'token' }
+  return { res, body }
+}
+
+/** Exchange the key for a 24h token and keep it; Garmin rate-limits token requests. */
+async function newToken(key: string): Promise<string> {
+  const { res, body } = await call({ part: 'token' }, { 'x-garmin-key': key })
+  if (!res.ok) throw new Error(body.error ?? `Couldn't reach Garmin (${res.status}).`)
+  const { token, expiresAt } = body as unknown as { token: string; expiresAt: number }
+  ls.set(TOKEN, JSON.stringify({ token, expiresAt }))
+  return token
+}
+
+function savedToken(): string | null {
+  try {
+    const t = JSON.parse(ls.get(TOKEN) ?? 'null') as { token: string; expiresAt: number } | null
+    return t && t.expiresAt > Date.now() ? t.token : null
+  } catch {
+    return null
+  }
+}
+
+/** Shown on the Sync page while waiting out Garmin's per-minute limit. */
+let onPause: ((seconds: number) => void) | null = null
 
 async function garmin<T>(params: Record<string, string>): Promise<T> {
-  const res = await fetch(`/api/garmin?${new URLSearchParams(params)}`, {
-    headers: { 'x-app-password': getPassword() ?? '' },
-  })
-  if (res.status === 401) {
-    ls.set('lifelong:pw', null)
-    window.dispatchEvent(new Event('lifelong:auth'))
-    throw new AuthError('Wrong password.')
+  const key = getKey()
+  if (!key) throw new Error('Connect your Garmin account first.')
+  let renewed = false
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const token = savedToken() ?? (await newToken(key))
+    const { res, body } = await call(params, { 'x-garmin-token': token })
+    if (res.ok) return body as T
+    if (res.status === 401 && body.reason === 'token' && !renewed) {
+      ls.set(TOKEN, null) // expired or revoked: get a fresh one and retry once
+      renewed = true
+      continue
+    }
+    if (res.status === 429) {
+      const wait = Math.min(90, Number((body as { retryInSeconds?: number }).retryInSeconds) || 30)
+      onPause?.(wait)
+      await new Promise((r) => setTimeout(r, wait * 1000 + 500))
+      continue
+    }
+    throw new Error(body.error ?? `Request failed (${res.status})`)
   }
-  if (res.status === 204) return undefined as T
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`)
-  return body as T
+  throw new Error('Garmin is busy. Try syncing again in a few minutes.')
 }
 
-export async function signIn(password: string): Promise<void> {
-  ls.set('lifelong:pw', password)
-  try {
-    await garmin({ part: 'check' })
-  } catch (e) {
-    ls.set('lifelong:pw', null)
-    throw e
-  }
-  window.dispatchEvent(new Event('lifelong:auth'))
+/** Validate and store a key. A different key than before means a different person: clear the data. */
+export async function connect(key: string): Promise<void> {
+  const k = key.trim()
+  await newToken(k)
+  const fingerprint = k.slice(-12)
+  if (ls.get('lifelong:key-fp') !== fingerprint) await forgetDeviceData()
+  ls.set('lifelong:key-fp', fingerprint)
+  ls.set(KEY, k)
+  connected()
 }
 
-export function signOut() {
-  ls.set('lifelong:pw', null)
-  window.dispatchEvent(new Event('lifelong:auth'))
+/** Remove the key, token and all data from this device. */
+export async function disconnect() {
+  for (const k of [KEY, TOKEN, 'lifelong:key-fp', 'lifelong:settings']) ls.set(k, null)
+  await forgetDeviceData()
+  connected()
 }
 
-export async function forgetDeviceData() {
+async function forgetDeviceData() {
   dataset = emptyDataset()
   meta = { lastSync: null, finishedAt: null }
-  await idbSet('dataset', dataset)
-  await idbSet('meta', meta)
+  await idbSet('dataset', dataset).catch(() => {})
+  await idbSet('meta', meta).catch(() => {})
   changed()
 }
 
@@ -160,6 +201,7 @@ export async function sync(full = false): Promise<void> {
     Object.assign(status, { phase, message })
     window.dispatchEvent(new Event('lifelong:sync'))
   }
+  onPause = (seconds) => report('paused', `Garmin allows 100 requests a minute, pausing ${seconds} s…`)
   try {
     const incremental = !full && meta.lastSync !== null
     report('profile', 'Reading your Garmin profile')
@@ -201,7 +243,7 @@ export async function sync(full = false): Promise<void> {
 /** Sync on open when the data is more than 3 hours old. */
 export async function autoSync() {
   await loaded
-  if (!getPassword()) return
+  if (!getKey()) return
   const age = meta.finishedAt ? Date.now() - Date.parse(meta.finishedAt) : Infinity
   if (age > 3 * 3600_000) void sync()
 }

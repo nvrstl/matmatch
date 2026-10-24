@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { SyncStatus } from '../../shared/types'
 import { Card, Loading, PageHeader, StatusPill, buttonCls } from '../components/ui'
 import { apiFetch, useApi } from '../lib/api'
-import { forgetDeviceData, IS_CLOUD, signOut } from '../lib/cloud'
+import { disconnect, IS_CLOUD } from '../lib/cloud'
 
 const LABELS: Record<string, string> = {
   activities: 'Activities',
@@ -44,7 +44,7 @@ export default function Sync() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card
           title="Garmin connection"
-          action={<StatusPill state={data.hasKey ? 'good' : 'bad'} label={data.hasKey ? 'API key configured' : 'No API key'} />}
+          action={<StatusPill state={data.hasKey ? 'good' : 'bad'} label={data.hasKey ? (IS_CLOUD ? 'Connected' : 'API key configured') : 'No API key'} />}
         >
           {data.hasKey ? (
             <>
@@ -100,17 +100,12 @@ export default function Sync() {
             </tbody>
           </table>
           {IS_CLOUD && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button className="rounded-lg border border-line px-3 py-1.5 text-[13px] text-ink-2 hover:text-ink" onClick={signOut}>
-                Sign out
-              </button>
-              <button
-                className="rounded-lg border border-line px-3 py-1.5 text-[13px] text-ink-2 hover:text-ink"
-                onClick={() => void forgetDeviceData()}
-              >
-                Remove data from this device
-              </button>
-            </div>
+            <button
+              className="mt-4 rounded-lg border border-line px-3 py-1.5 text-[13px] text-ink-2 hover:text-ink"
+              onClick={() => void disconnect()}
+            >
+              Disconnect Garmin and remove data from this device
+            </button>
           )}
         </Card>
       </div>

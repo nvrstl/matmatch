@@ -1,24 +1,24 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { autoSync, getPassword, IS_CLOUD, signIn } from '../lib/cloud'
+import { autoSync, connect, getKey, IS_CLOUD } from '../lib/cloud'
 import { buttonCls, inputCls } from './ui'
 
-/** Hosted mode: ask for the app password once per device, then sync in the background. */
+/** Hosted mode: each person connects their own Garmin key once per device, then it syncs itself. */
 export function CloudGate({ children }: { children: ReactNode }) {
-  const [authed, setAuthed] = useState(() => !IS_CLOUD || Boolean(getPassword()))
+  const [connected, setConnected] = useState(() => !IS_CLOUD || Boolean(getKey()))
   useEffect(() => {
     if (!IS_CLOUD) return
-    const onAuth = () => setAuthed(Boolean(getPassword()))
+    const onAuth = () => setConnected(Boolean(getKey()))
     window.addEventListener('lifelong:auth', onAuth)
     return () => window.removeEventListener('lifelong:auth', onAuth)
   }, [])
   useEffect(() => {
-    if (authed && IS_CLOUD) void autoSync()
-  }, [authed])
-  return authed ? <>{children}</> : <SignIn />
+    if (connected && IS_CLOUD) void autoSync()
+  }, [connected])
+  return connected ? <>{children}</> : <Connect />
 }
 
-function SignIn() {
-  const [pw, setPw] = useState('')
+function Connect() {
+  const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submit = async (e: FormEvent) => {
@@ -26,7 +26,7 @@ function SignIn() {
     setBusy(true)
     setError(null)
     try {
-      await signIn(pw)
+      await connect(key)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -35,36 +35,56 @@ function SignIn() {
   }
   return (
     <div className="gutter flex min-h-screen items-center justify-center py-10">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6">
-        <div className="flex items-center gap-2">
-          <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="h-8 w-8" />
+      <div className="w-full max-w-md">
+        <div className="mb-5 flex items-center gap-2">
+          <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="h-9 w-9" />
           <div>
-            <div className="text-[17px] font-semibold">Lifelong</div>
-            <div className="text-[12px] text-muted">Your Garmin history</div>
+            <div className="text-lg font-semibold leading-tight">Lifelong</div>
+            <div className="text-[13px] text-ink-2">Your running history, race predictions and next week’s plan</div>
           </div>
         </div>
-        <label htmlFor="pw" className="mt-6 block text-[13px] text-ink-2">
-          Password
-        </label>
-        <input
-          id="pw"
-          type="password"
-          autoComplete="current-password"
-          autoFocus
-          className={`${inputCls} mt-1`}
-          value={pw}
-          onChange={(e) => setPw(e.target.value)}
-        />
-        {error && (
-          <p className="mt-2 text-[13px]" style={{ color: 'var(--color-critical)' }}>
-            {error}
+        <form onSubmit={submit} className="rounded-2xl border border-line bg-surface p-5 sm:p-6">
+          <h1 className="text-[17px] font-semibold">Connect your Garmin</h1>
+          <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-[13px] text-ink-2">
+            <li>
+              Sign in to{' '}
+              <a href="https://connect.garmin.com" target="_blank" rel="noreferrer" className="text-accent underline">
+                Garmin Connect
+              </a>{' '}
+              on the web.
+            </li>
+            <li>
+              Open <strong>Account settings → Personal API Key</strong> and create a key. Garmin shows it only once.
+            </li>
+            <li>Paste it here.</li>
+          </ol>
+          <label htmlFor="garmin-key" className="mt-4 block text-[13px] text-ink-2">
+            Garmin Personal API key
+          </label>
+          <input
+            id="garmin-key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            className={`${inputCls} mt-1 font-mono`}
+            placeholder="GCDC_…"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
+          {error && (
+            <p className="mt-2 text-[13px]" style={{ color: 'var(--color-critical)' }}>
+              {error}
+            </p>
+          )}
+          <button className={`${buttonCls} mt-4 w-full`} disabled={busy || key.trim().length < 20}>
+            {busy ? 'Checking with Garmin…' : 'Connect'}
+          </button>
+          <p className="mt-4 text-[12px] leading-relaxed text-muted">
+            Your key and your data stay on this device. The server only passes requests on to Garmin and stores nothing.
+            You can disconnect at any time on the Sync page.
           </p>
-        )}
-        <button className={`${buttonCls} mt-4 w-full`} disabled={busy || !pw}>
-          {busy ? 'Checking…' : 'Open my dashboard'}
-        </button>
-        <p className="mt-4 text-[12px] text-muted">Your data is downloaded from Garmin and kept on this device only.</p>
-      </form>
+        </form>
+      </div>
     </div>
   )
 }

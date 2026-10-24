@@ -32,18 +32,15 @@ npm run dev               # http://localhost:5173
 | `npm run demo` | Seed demo data and start the app on it |
 | `npm test` | Unit tests for the prediction and planning logic |
 
-## Hosted on Vercel (use it on your phone)
+## Hosted on Vercel: anyone can use it with their own Garmin
 
-The same app also runs on Vercel. There, a small password-protected function (`api/garmin.ts`) holds your Garmin key and fetches data. Your phone downloads it, keeps it on the device (IndexedDB) and computes everything in the browser, so no database is needed. It re-syncs automatically when the data is more than 3 hours old. Goal and schedule settings are saved per device.
+The same app runs on Vercel for any number of people, with no accounts or passwords. Each person opens the site, pastes **their own** Garmin Personal API key, and their data downloads to their own device (IndexedDB). Everything is computed in their browser. It re-syncs automatically when the data is more than 3 hours old, and goal and schedule settings are saved per device.
 
-Set these in Vercel → Project → Settings → Environment Variables (Production), then redeploy:
+The only server code is `api/garmin.ts`, a relay. Browsers can't call Garmin directly, so it forwards each request using the key or 24-hour token the browser sends. It stores nothing and never uses a server-side key, so no one can see anyone else's data. **Don't set `GARMIN_API_KEY` in Vercel**; it's ignored there anyway.
 
-| Variable | Value |
-| --- | --- |
-| `GARMIN_API_KEY` | your Garmin Personal API key |
-| `APP_PASSWORD` | a long password you'll type once per device |
+Garmin allows about 100 requests a minute per person. A first sync of several years needs about 15 requests per year of history plus one per 100 activities, so it usually finishes in seconds. If Garmin asks for a pause, the app waits and continues.
 
-The function refuses every request until both are set, and rejects a wrong password. `vercel.json` builds with `npm run build:vercel` (cloud mode).
+No environment variables are needed. `vercel.json` builds with `npm run build:vercel` (cloud mode).
 
 ## How the numbers are made
 

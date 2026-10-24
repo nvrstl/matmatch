@@ -10,8 +10,8 @@ export interface WithRaw<T> {
   raw: Obj
 }
 
-/** Range limits per request, in days (from Garmin's API reference and testing). */
-export const RANGE_DAYS = { daily: 365, sleep: 31, hrv: 31, weight: 365 } as const
+/** Range limits per request, in days (from Garmin's API reference and testing; sleep rejects > 31). */
+export const RANGE_DAYS = { daily: 365, sleep: 31, hrv: 365, weight: 365 } as const
 
 export async function fetchProfile(client: GarminClient) {
   return client.get<Obj>('/userprofile-service/userprofile/settings')

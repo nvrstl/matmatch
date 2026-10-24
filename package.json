@@ -14,7 +14,8 @@
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "tsx --test 'server/**/*.test.ts'",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build:vercel": "VITE_CLOUD=1 vite build"
   },
   "dependencies": {
     "express": "^5.1.0",

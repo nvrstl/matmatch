@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { SyncStatus } from '../../shared/types'
 import { Card, Loading, PageHeader, StatusPill, buttonCls } from '../components/ui'
 import { apiFetch, useApi } from '../lib/api'
+import { forgetDeviceData, IS_CLOUD, signOut } from '../lib/cloud'
 
 const LABELS: Record<string, string> = {
   activities: 'Activities',
@@ -36,7 +37,9 @@ export default function Sync() {
   return (
     <>
       <PageHeader title="Sync">
-        Data is pulled from the Garmin Connect Personal API and stored only on this machine (data/lifelong.db).
+        {IS_CLOUD
+          ? 'Data is pulled from the Garmin Connect Personal API and kept only on this device. It updates automatically when you open the app.'
+          : 'Data is pulled from the Garmin Connect Personal API and stored only on this machine (data/lifelong.db).'}
       </PageHeader>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card
@@ -85,7 +88,7 @@ export default function Sync() {
             </ol>
           )}
         </Card>
-        <Card title="Stored locally">
+        <Card title={IS_CLOUD ? 'Stored on this device' : 'Stored locally'}>
           <table className="tabular w-full text-sm">
             <tbody className="divide-y divide-line">
               {Object.entries(data.counts).map(([k, v]) => (
@@ -96,6 +99,19 @@ export default function Sync() {
               ))}
             </tbody>
           </table>
+          {IS_CLOUD && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button className="rounded-lg border border-line px-3 py-1.5 text-[13px] text-ink-2 hover:text-ink" onClick={signOut}>
+                Sign out
+              </button>
+              <button
+                className="rounded-lg border border-line px-3 py-1.5 text-[13px] text-ink-2 hover:text-ink"
+                onClick={() => void forgetDeviceData()}
+              >
+                Remove data from this device
+              </button>
+            </div>
+          )}
         </Card>
       </div>
     </>

@@ -31,7 +31,7 @@ export class GarminClient {
     this.spacingMs = spacingMs
   }
 
-  private async getToken(): Promise<string> {
+  private async getToken(retried = false): Promise<string> {
     if (this.token && Date.now() < this.tokenExpires) return this.token
     const res = await fetch(TOKEN_URL, {
       method: 'POST',
@@ -39,6 +39,19 @@ export class GarminClient {
       headers: { Authorization: `ApiKey ${this.apiKey}`, Accept: '*/*' },
     })
     const text = await res.text()
+    // Token requests are rate limited (~100 per window); Garmin says how long to wait.
+    if (res.status === 429 && !retried) {
+      let wait = 20
+      try {
+        wait = Number((JSON.parse(text) as { retryInSeconds?: number }).retryInSeconds) || 20
+      } catch {
+        /* keep the default wait */
+      }
+      if (wait <= 45) {
+        await sleep(wait * 1000 + 500)
+        return this.getToken(true)
+      }
+    }
     if (!res.ok) {
       throw new GarminApiError(
         res.status,

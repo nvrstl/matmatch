@@ -1,7 +1,7 @@
 // Training load: Garmin's per-activity load when present, otherwise Banister TRIMP from heart rate,
 // otherwise a duration-based estimate. Fitness (CTL, 42-day) / fatigue (ATL, 7-day) / form (TSB).
-import { addDays, weekStart } from '../../shared/dates'
-import type { Activity, LoadPoint } from '../../shared/types'
+import { addDays, weekStart } from '../dates'
+import type { Activity, LoadPoint } from '../types'
 import type { HrContext } from './predict'
 
 export function activityLoad(a: Activity, hr: HrContext): number {

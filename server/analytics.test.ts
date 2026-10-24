@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { addDays } from '../../shared/dates'
-import type { Activity, Readiness, Settings } from '../../shared/types'
-import { DEFAULT_SETTINGS } from '../db'
-import { chunks } from '../garmin/sync'
-import { parseToken } from '../garmin/client'
-import { mapActivity } from '../garmin/map'
-import { chooseDays, planNextWeek } from './plan'
-import { effortsOf, endurancePenalty, predictRaces } from './predict'
-import { paceAt, timeFor, vdotFor } from '../../shared/vdot'
+import { addDays } from '../shared/dates'
+import type { Activity, Readiness, Settings } from '../shared/types'
+import { DEFAULT_SETTINGS } from '../shared/dataset'
+import { chunks } from '../shared/chunks'
+import { parseToken } from './garmin/client'
+import { mapActivity } from './garmin/map'
+import { chooseDays, planNextWeek } from '../shared/analytics/plan'
+import { effortsOf, endurancePenalty, predictRaces } from '../shared/analytics/predict'
+import { paceAt, timeFor, vdotFor } from '../shared/vdot'
 
 const near = (a: number, b: number, tol: number) => assert.ok(Math.abs(a - b) <= tol, `${a} not within ${tol} of ${b}`)
 

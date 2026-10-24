@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Activity } from '../../shared/types'
+import { cloudFetch, IS_CLOUD } from './cloud'
 
 // Static snapshot mode (VITE_STATIC=1): answers come from data baked into snapshot.js, read-only.
 export const IS_STATIC = Boolean(import.meta.env.VITE_STATIC)
@@ -31,6 +32,7 @@ export const snapshotLabel = () =>
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (IS_STATIC) return fromSnapshot<T>(path, init)
+  if (IS_CLOUD) return cloudFetch<T>(path, init)
   const res = await fetch(`/api${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
@@ -54,6 +56,17 @@ export function useApi<T>(path: string) {
       alive = false
     }
   }, [path, tick])
+  // Hosted mode: re-read when a sync lands or progresses.
+  useEffect(() => {
+    if (!IS_CLOUD) return
+    const bump = () => setTick((t) => t + 1)
+    window.addEventListener('lifelong:data', bump)
+    if (path === '/sync') window.addEventListener('lifelong:sync', bump)
+    return () => {
+      window.removeEventListener('lifelong:data', bump)
+      window.removeEventListener('lifelong:sync', bump)
+    }
+  }, [path])
   const reload = useCallback(() => setTick((t) => t + 1), [])
   return { data, error, reload }
 }

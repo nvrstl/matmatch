@@ -4,11 +4,11 @@
 // holds when readiness signals are mixed and cuts back when they're poor.
 // Structure: one long run, a threshold session (the key HM workout) and — volume permitting —
 // a second quality day whose content depends on the phase relative to your goal race.
-import { addDays, daysBetween, toDate, WEEKDAYS, weekStart, weekdayIndex } from '../../shared/dates'
-import type { Activity, Paces, PlanDay, Readiness, Settings, WeekPlan } from '../../shared/types'
+import { addDays, daysBetween, toDate, WEEKDAYS, weekStart, weekdayIndex } from '../dates'
+import type { Activity, Paces, PlanDay, Readiness, Settings, WeekPlan } from '../types'
 import { fmtTime } from './predict'
 import { weeklyRunKm } from './load'
-import { paceAt, timeFor } from '../../shared/vdot'
+import { paceAt, timeFor } from '../vdot'
 
 const HALF = 21097.5
 

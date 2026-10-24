@@ -6,10 +6,10 @@
 //    stretches without hard efforts.
 // 4. VDOT → equivalent race times, then an endurance penalty for HM/M when recent volume and
 //    long runs don't support the distance (VDOT assumes you trained for it).
-import { addDays, daysBetween } from '../../shared/dates'
-import type { Activity, Effort, Prediction, PredictionResult, RaceKey } from '../../shared/types'
-import { RACES } from '../../shared/types'
-import { timeFor, vdotFor, vo2Cost } from '../../shared/vdot'
+import { addDays, daysBetween } from '../dates'
+import type { Activity, Effort, Prediction, PredictionResult, RaceKey } from '../types'
+import { RACES } from '../types'
+import { timeFor, vdotFor, vo2Cost } from '../vdot'
 
 const SPLIT_KEYS: RaceKey[] = ['5k', '10k', 'half', 'marathon']
 const RACE_METERS: Record<RaceKey, number> = { '5k': 5000, '10k': 10000, half: 21097.5, marathon: 42195 }

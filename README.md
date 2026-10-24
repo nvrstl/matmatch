@@ -6,7 +6,7 @@ A private dashboard for **your whole Garmin history**, focused on running a fast
 - **Race predictions** for 5K, 10K, half marathon and marathon, with a likely range, a confidence level and the effort each one is based on. It also lists your personal bests and works out what a goal half-marathon time would require.
 - **Next week's training plan**: a 7-day plan with paces, built around half-marathon performance. It adapts to your recent volume, recovery signals (resting HR, HRV, sleep, form) and your goal race date and time.
 
-It runs on your own computer. Your data goes from Garmin into a local SQLite file (`data/lifelong.db`) and nowhere else. The server only listens on `localhost`.
+Run it on your own computer, where your data goes from Garmin into a local SQLite file (`data/lifelong.db`) and the server only listens on `localhost`. Or host it on Vercel (see below).
 
 ## Setup
 
@@ -31,6 +31,19 @@ npm run dev               # http://localhost:5173
 | `npm run build && npm start` | Production build served by the same server |
 | `npm run demo` | Seed demo data and start the app on it |
 | `npm test` | Unit tests for the prediction and planning logic |
+
+## Hosted on Vercel (use it on your phone)
+
+The same app also runs on Vercel. There, a small password-protected function (`api/garmin.ts`) holds your Garmin key and fetches data. Your phone downloads it, keeps it on the device (IndexedDB) and computes everything in the browser, so no database is needed. It re-syncs automatically when the data is more than 3 hours old. Goal and schedule settings are saved per device.
+
+Set these in Vercel → Project → Settings → Environment Variables (Production), then redeploy:
+
+| Variable | Value |
+| --- | --- |
+| `GARMIN_API_KEY` | your Garmin Personal API key |
+| `APP_PASSWORD` | a long password you'll type once per device |
+
+The function refuses every request until both are set, and rejects a wrong password. `vercel.json` builds with `npm run build:vercel` (cloud mode).
 
 ## How the numbers are made
 
@@ -63,8 +76,9 @@ server/
   api.ts              JSON endpoints used by the UI
   db.ts               SQLite schema (node:sqlite) and queries
   garmin/             Personal API client, DTO mapping, incremental sync
-  analytics/          predictions, training load, readiness, weekly plan (+ tests)
   cli/                sync and demo-data commands
-shared/               types, date helpers and the VDOT model, shared with the UI
+shared/               types, VDOT model, analytics (predictions, load, readiness, plan) and
+                      compute.ts: every view, used by the local server and the hosted app
+api/garmin.ts         Vercel function for the hosted version
 src/                  React UI (pages: Overview, Progress, Races, Plan, Activities, Sync)
 ```

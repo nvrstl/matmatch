@@ -1,11 +1,10 @@
 // Pulls lifelong history from the Personal API into SQLite. Re-runs are incremental.
+import { chunks } from '../../shared/chunks'
 import { addDays, localToday } from '../../shared/dates'
 import type { SyncStatus } from '../../shared/types'
 import { getDb, kvGet, kvSet, tableCounts, upsertActivity } from '../db'
 import { GarminClient } from './client'
-import { mapActivity, mapDaily, mapHrv, mapSleep, mapWeight } from './map'
-
-type Obj = Record<string, unknown>
+import { fetchActivities, fetchDaily, fetchHrv, fetchProfile, fetchSleep, fetchWeight, RANGE_DAYS } from './fetch'
 
 const status: SyncStatus = {
   running: false,
@@ -35,16 +34,6 @@ const report = (phase: string, message: string, log = true) => {
   if (log) console.log(`[sync] ${phase}: ${message}`)
 }
 
-/** Split [from, to] into consecutive inclusive chunks of at most `days` days. */
-export function chunks(from: string, to: string, days: number): [string, string][] {
-  const out: [string, string][] = []
-  for (let start = from; start <= to; start = addDays(start, days)) {
-    const end = addDays(start, days - 1)
-    out.push([start, end < to ? end : to])
-  }
-  return out
-}
-
 export async function runSync(opts: { full?: boolean } = {}): Promise<void> {
   if (status.running) throw new Error('A sync is already running')
   const key = process.env.GARMIN_API_KEY
@@ -63,33 +52,21 @@ export async function runSync(opts: { full?: boolean } = {}): Promise<void> {
   try {
     // --- Profile settings (training-day preferences seed the planner) --------------
     report('profile', 'Reading profile settings')
-    const profile = await client.get<Obj>('/userprofile-service/userprofile/settings')
+    const profile = await fetchProfile(client)
     if (profile) kvSet('profile', profile)
 
     // --- Activities: page through everything, newest first ------------------------
     const since = cursors.activities ? addDays(cursors.activities, -3) : undefined
-    let fetched = 0
-    for (let start = 0; ; start += 100) {
-      report('activities', since ? `New activities since ${since}: ${fetched}` : `Activities fetched: ${fetched}`, start % 1000 === 0)
-      const page = await client.get<Obj[]>('/activitylist-service/activities/search/activities', {
-        start,
-        limit: 100,
-        sortOrder: 'desc',
-        excludeChildren: false,
-        startDate: since,
-        endDate: since ? today : undefined,
-      })
-      if (!page?.length) break
-      db.exec('BEGIN')
-      for (const raw of page) {
-        const a = mapActivity(raw)
-        if (a) upsertActivity(a, raw)
-      }
-      db.exec('COMMIT')
-      fetched += page.length
-      if (page.length < 100) break
-    }
-    report('activities', `Activities fetched: ${fetched}`)
+    report('activities', since ? `New activities since ${since}` : 'Fetching all activities')
+    const acts = await fetchActivities(client, {
+      since,
+      today,
+      onPage: (n) => report('activities', `Activities fetched: ${n}`, n % 1000 === 0),
+    })
+    db.exec('BEGIN')
+    for (const { row, raw } of acts) upsertActivity(row, raw)
+    db.exec('COMMIT')
+    report('activities', `Activities fetched: ${acts.length}`)
     saveCursor('activities', today)
 
     // --- Wellness ranges: start from history start, or resume from the cursor -------
@@ -97,23 +74,20 @@ export async function runSync(opts: { full?: boolean } = {}): Promise<void> {
     const historyStart = process.env.GARMIN_HISTORY_START ?? first ?? addDays(today, -5 * 365)
     const from = (k: string) => (cursors[k] ? addDays(cursors[k], -7) : historyStart)
 
-    const ranged = async (
-      name: string,
-      days: number,
-      fetchRange: (a: string, b: string) => Promise<number>,
+    const ranged = async <T>(
+      name: keyof typeof RANGE_DAYS,
+      fetchRange: (a: string, b: string) => Promise<T[]>,
+      insert: (row: T) => void,
     ) => {
       let n = 0
-      const parts = chunks(from(name), today, days)
+      const parts = chunks(from(name), today, RANGE_DAYS[name])
       for (const [i, [a, b]] of parts.entries()) {
         report(name, `${a} → ${b} (${i + 1}/${parts.length}), ${n} records`, false)
+        const rows = await fetchRange(a, b)
         db.exec('BEGIN')
-        try {
-          n += await fetchRange(a, b)
-          db.exec('COMMIT')
-        } catch (e) {
-          db.exec('ROLLBACK')
-          throw e
-        }
+        for (const r of rows) insert(r)
+        db.exec('COMMIT')
+        n += rows.length
       }
       report(name, `${n} records`)
       saveCursor(name, today)
@@ -123,57 +97,25 @@ export async function runSync(opts: { full?: boolean } = {}): Promise<void> {
       `INSERT OR REPLACE INTO daily (date, steps, resting_hr, min_hr, max_hr, stress_avg, bb_max, bb_min,
         kcal_total, kcal_active, im_moderate, im_vigorous, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
-    await ranged('daily', 365, async (a, b) => {
-      const res = await client.get<{ data?: Obj[] }>('/usersummary-service/v2/dailysummaries', { startDate: a, endDate: b })
-      const rows = res?.data ?? []
-      for (const raw of rows) {
-        const d = mapDaily(raw)
-        insDaily.run(d.date, d.steps, d.resting_hr, d.min_hr, d.max_hr, d.stress_avg, d.bb_max, d.bb_min,
-          d.kcal_total, d.kcal_active, d.im_moderate, d.im_vigorous, JSON.stringify(raw))
-      }
-      return rows.length
-    })
+    await ranged('daily', (a, b) => fetchDaily(client, a, b), ({ row: d, raw }) =>
+      insDaily.run(d.date, d.steps, d.resting_hr, d.min_hr, d.max_hr, d.stress_avg, d.bb_max, d.bb_min,
+        d.kcal_total, d.kcal_active, d.im_moderate, d.im_vigorous, JSON.stringify(raw)),
+    )
 
     const insSleep = db.prepare(
       'INSERT OR REPLACE INTO sleep (date, total_s, deep_s, light_s, rem_s, awake_s, score, raw) VALUES (?,?,?,?,?,?,?,?)',
     )
-    await ranged('sleep', 31, async (a, b) => {
-      const rows = (await client.get<Obj[]>('/sleep-service/sleep/dailySleepSummariesByDate', { startDate: a, endDate: b })) ?? []
-      let n = 0
-      for (const raw of rows) {
-        const s = mapSleep(raw)
-        if (!s.total_s) continue
-        insSleep.run(s.date, s.total_s, s.deep_s, s.light_s, s.rem_s, s.awake_s, s.score, JSON.stringify(raw))
-        n++
-      }
-      return n
-    })
+    await ranged('sleep', (a, b) => fetchSleep(client, a, b), ({ row: s, raw }) =>
+      insSleep.run(s.date, s.total_s, s.deep_s, s.light_s, s.rem_s, s.awake_s, s.score, JSON.stringify(raw)),
+    )
 
     const insHrv = db.prepare('INSERT OR REPLACE INTO hrv (date, last_night, weekly_avg, status, raw) VALUES (?,?,?,?,?)')
-    await ranged('hrv', 31, async (a, b) => {
-      const res = await client.get<{ hrvSummaries?: Obj[] }>(`/hrv-service/hrv/daily/${a}/${b}`)
-      const rows = res?.hrvSummaries ?? []
-      for (const raw of rows) {
-        const h = mapHrv(raw)
-        insHrv.run(h.date, h.last_night, h.weekly_avg, h.status, JSON.stringify(raw))
-      }
-      return rows.length
-    })
+    await ranged('hrv', (a, b) => fetchHrv(client, a, b), ({ row: h, raw }) =>
+      insHrv.run(h.date, h.last_night, h.weekly_avg, h.status, JSON.stringify(raw)),
+    )
 
     const insWeight = db.prepare('INSERT OR REPLACE INTO weight (date, kg, bmi, body_fat) VALUES (?,?,?,?)')
-    await ranged('weight', 365, async (a, b) => {
-      // weight/all answers 400 for ranges; the range endpoint returns each day's latest weigh-in.
-      const res = await client.get<{ dailyWeightSummaries?: Obj[] }>(`/weight-service/weight/range/${a}/${b}`)
-      let n = 0
-      for (const day of res?.dailyWeightSummaries ?? []) {
-        const raw = (day.latestWeight as Obj | undefined) ?? {}
-        const w = mapWeight({ calendarDate: day.summaryDate, ...raw })
-        if (!w?.kg) continue
-        insWeight.run(w.date, w.kg, w.bmi, w.body_fat)
-        n++
-      }
-      return n
-    })
+    await ranged('weight', (a, b) => fetchWeight(client, a, b), ({ row: w }) => insWeight.run(w.date, w.kg, w.bmi, w.body_fat))
 
     report('done', 'Sync complete')
     kvSet('last_sync', { finishedAt: new Date().toISOString(), error: null })

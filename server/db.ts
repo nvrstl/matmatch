@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { DEFAULT_SETTINGS, type DailyRow, type HrvRow, type SleepRow, type WeightRow } from '../shared/dataset'
 import type { Activity, RaceKey, Settings, Sport } from '../shared/types'
 
 const DB_PATH = resolve(process.env.LIFELONG_DB ?? 'data/lifelong.db')
@@ -153,32 +154,6 @@ export function allActivities(): Activity[] {
 // ---------------------------------------------------------------------------
 // Wellness
 
-export interface DailyRow {
-  date: string
-  steps: number | null
-  resting_hr: number | null
-  stress_avg: number | null
-  bb_max: number | null
-}
-
-export interface SleepRow {
-  date: string
-  total_s: number | null
-  score: number | null
-}
-
-export interface HrvRow {
-  date: string
-  last_night: number | null
-  weekly_avg: number | null
-  status: string | null
-}
-
-export interface WeightRow {
-  date: string
-  kg: number | null
-}
-
 export const wellness = {
   daily: () =>
     getDb().prepare('SELECT date, steps, resting_hr, stress_avg, bb_max FROM daily ORDER BY date').all() as unknown as DailyRow[],
@@ -199,21 +174,8 @@ export function tableCounts(): Record<string, number> {
 // ---------------------------------------------------------------------------
 // Settings
 
-export const DEFAULT_SETTINGS: Settings = {
-  goalRaceDate: null,
-  goalHalfSeconds: null,
-  runDaysPerWeek: 5,
-  longRunDay: 6,
-  restDays: [0, 4],
-  maxWeeklyKm: null,
-}
-
-export function getSettings(): Settings {
-  return { ...DEFAULT_SETTINGS, ...(kvGet<Partial<Settings>>('settings') ?? {}) }
-}
-
 export function saveSettings(patch: Partial<Settings>): Settings {
-  const next = { ...getSettings(), ...patch }
+  const next = { ...DEFAULT_SETTINGS, ...(kvGet<Partial<Settings>>('settings') ?? {}), ...patch }
   kvSet('settings', next)
   return next
 }

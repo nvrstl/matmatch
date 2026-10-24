@@ -3,6 +3,7 @@ import type { Overview as O } from '../../shared/types'
 import { Bars } from '../components/charts'
 import { Card, Empty, Loading, PageHeader, Stat, StatusPill } from '../components/ui'
 import { useApi } from '../lib/api'
+import { IS_CLOUD } from '../lib/cloud'
 import { fmtDate, fmtKm, fmtPace, fmtTime, SPORT_LABEL } from '../lib/format'
 
 export default function Overview() {
@@ -13,8 +14,17 @@ export default function Overview() {
       <>
         <PageHeader title="Welcome" />
         <Empty>
-          No data yet. Add your Garmin Personal API key and run your first sync on{' '}
-          <Link to="/sync" className="text-accent underline">Sync</Link>.
+          {IS_CLOUD ? (
+            <>
+              Downloading your Garmin history. The first time takes about half a minute; progress is on{' '}
+              <Link to="/sync" className="text-accent underline">Sync</Link>.
+            </>
+          ) : (
+            <>
+              No data yet. Add your Garmin Personal API key and run your first sync on{' '}
+              <Link to="/sync" className="text-accent underline">Sync</Link>.
+            </>
+          )}
         </Empty>
       </>
     )

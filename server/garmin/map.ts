@@ -1,5 +1,5 @@
 // Map Garmin Personal API DTOs onto our flat tables.
-import type { Activity, Sport } from '../../shared/types'
+import type { Activity, Sport } from '../../shared/types.js'
 
 type Obj = Record<string, unknown>
 

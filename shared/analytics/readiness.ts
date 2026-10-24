@@ -1,6 +1,6 @@
-import { addDays, daysBetween } from '../../shared/dates'
-import type { LoadPoint, Readiness } from '../../shared/types'
-import type { DailyRow, HrvRow, SleepRow } from '../db'
+import { addDays, daysBetween } from '../dates'
+import type { LoadPoint, Readiness } from '../types'
+import type { DailyRow, HrvRow, SleepRow } from '../dataset'
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
 

@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, MemoryRouter } from 'react-router-dom'
 import App from './App'
+import { CloudGate } from './components/CloudGate'
 import { IS_STATIC } from './lib/api'
 import './index.css'
 
@@ -14,7 +15,9 @@ createRoot(document.getElementById('root')!).render(
       </MemoryRouter>
     ) : (
       <BrowserRouter>
-        <App />
+        <CloudGate>
+          <App />
+        </CloudGate>
       </BrowserRouter>
     )}
   </StrictMode>,

@@ -18,7 +18,9 @@
     "build:vercel": "VITE_CLOUD=1 vite build"
   },
   "dependencies": {
+    "@garmin/fitsdk": "21.217.0",
     "express": "^5.1.0",
+    "fflate": "0.8.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.17.0",

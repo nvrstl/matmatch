@@ -68,20 +68,25 @@ export interface PlanInputs {
   predictedHalfSeconds: number | null
   readiness: Readiness
   today: string
+  /** 'next' (default): the coming week. 'current': the week containing today, planned from the
+   *  weeks before it, which is what "today's session" is read from. */
+  which?: 'current' | 'next'
 }
 
-export function planNextWeek({ acts, settings, vdot, predictedHalfSeconds, readiness, today }: PlanInputs): WeekPlan {
-  const planStart = weekdayIndex(today) === 0 ? today : addDays(weekStart(today), 7)
-  const lastComplete = addDays(weekStart(today), -1)
+export function planNextWeek({ acts, settings, vdot, predictedHalfSeconds, readiness, today, which = 'next' }: PlanInputs): WeekPlan {
+  const thisWeek = weekStart(today)
+  const planStart = which === 'current' || weekdayIndex(today) === 0 ? thisWeek : addDays(thisWeek, 7)
+  const lastComplete = addDays(planStart === thisWeek ? thisWeek : weekStart(today), -1)
   const completed = weeklyRunKm(acts, lastComplete, 4)
   const current = weeklyRunKm(acts, today, 1)[0]
-  const recentWeeksKm = planStart === today ? completed : [...completed.slice(1), current]
+  const midWeek = planStart !== thisWeek // planning next week while this one is still running
+  const recentWeeksKm = midWeek ? [...completed.slice(1), current] : completed
 
   const last3 = completed.slice(-3).map((w) => w.km)
   const avg3 = last3.reduce((a, b) => a + b, 0) / last3.length
   const maxRecent = Math.max(...completed.map((w) => w.km))
   // Planning mid-week: if this week is already far below average, it is the down week.
-  const easingAlready = planStart !== today && current.km < avg3 * 0.6
+  const easingAlready = midWeek && current.km < avg3 * 0.6
   const rising = !easingAlready && last3.length === 3 && last3[1] > last3[0] * 1.02 && last3[2] > last3[1] * 1.02
   const effectiveVdot = vdot ?? 40
   const goal = settings.goalHalfSeconds

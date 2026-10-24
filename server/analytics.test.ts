@@ -8,6 +8,7 @@ import { parseToken } from './garmin/client'
 import { mapActivity } from './garmin/map'
 import { chooseDays, planNextWeek } from '../shared/analytics/plan'
 import { effortsOf, endurancePenalty, predictRaces } from '../shared/analytics/predict'
+import { pacingPlan } from '../shared/pacing'
 import { paceAt, timeFor, vdotFor } from '../shared/vdot'
 
 const near = (a: number, b: number, tol: number) => assert.ok(Math.abs(a - b) <= tol, `${a} not within ${tol} of ${b}`)
@@ -110,4 +111,18 @@ test('sync helpers', () => {
   const a = mapActivity({ activityId: 1, startTimeLocal: '2026-10-01 07:00:00', activityType: { typeKey: 'running' }, distance: 10000, duration: 2700, fastestSplit_5000: 1300 })
   assert.equal(a?.sport, 'run')
   assert.equal(a?.fastest['5k'], 1300)
+})
+
+test('pacing: splits add up to the target and checkpoints line up', () => {
+  const even = pacingPlan(21097.5, 85 * 60, 'even') // 1:25:00
+  assert.equal(even.km.length, 22) // 21 whole km + 97.5 m
+  near(even.km.reduce((a, k) => a + k.split, 0), 5100, 0.01)
+  near(even.km[0].split, 241.7, 0.1) // 4:02/km
+  near(even.checkpoints.find((c) => c.label === '10K')!.cumulative, 2417, 1)
+  assert.deepEqual(even.checkpoints.map((c) => c.label), ['5K', '10K', '15K', '20K', 'Finish'])
+  const neg = pacingPlan(21097.5, 85 * 60, 'negative')
+  near(neg.checkpoints.at(-1)!.cumulative, 5100, 0.01)
+  assert.ok(neg.km[0].pace > even.km[0].pace && neg.km[20].pace < even.km[20].pace)
+  near(neg.checkpoints.find((c) => c.label === '10K')!.cumulative, 2441, 1) // ~24 s behind even at 10K
+  assert.equal(pacingPlan(42195, 3 * 3600, 'even').checkpoints.length, 10)
 })

@@ -66,6 +66,10 @@ export function kvGet<T>(key: string): T | null {
   return row ? (JSON.parse(row.value) as T) : null
 }
 
+export function kvDelete(key: string) {
+  getDb().prepare('DELETE FROM kv WHERE key = ?').run(key)
+}
+
 export function kvSet(key: string, value: unknown) {
   getDb()
     .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')

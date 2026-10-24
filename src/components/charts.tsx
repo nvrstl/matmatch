@@ -226,3 +226,57 @@ function NoData({ height }: { height: number }): ReactNode {
     </div>
   )
 }
+
+/** A single series over distance (km), e.g. pace or heart rate during one run. */
+export function DistanceChart({ data, label, format, invert, height = 170, color = SERIES[0] }: {
+  data: { km: number; value: number | null }[]
+  label: string
+  format: (v: number) => string
+  invert?: boolean
+  height?: number
+  color?: string
+}) {
+  const pts = data.filter((p) => p.value !== null)
+  if (pts.length < 2) return <NoData height={height} />
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+        <CartesianGrid vertical={false} stroke="var(--line)" />
+        <XAxis dataKey="km" type="number" domain={[0, 'dataMax']} tickFormatter={(v) => `${Math.round(v)}`} {...axisProps} unit=" km" minTickGap={24} />
+        <YAxis reversed={invert} domain={['auto', 'auto']} tickFormatter={format} width={48} {...axisProps} axisLine={false} />
+        <Tooltip
+          cursor={{ stroke: 'var(--axis)', strokeWidth: 1 }}
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null
+            const p = payload[0].payload as { km: number; value: number | null }
+            return p.value === null ? null : <TooltipBox title={`${p.km.toFixed(2)} km`} rows={[{ color, label, value: format(p.value) }]} />
+          }}
+        />
+        <Line dataKey="value" type="monotone" stroke={color} strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: 'var(--surface)', strokeWidth: 2 }} connectNulls isAnimationActive={false} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  )
+}
+
+/** The route's shape as a line, projected so it isn't squashed away from the equator. */
+export function RouteSketch({ route, height = 220 }: { route: [number, number][]; height?: number }) {
+  if (route.length < 2) return null
+  const lat0 = route.reduce((s, p) => s + p[0], 0) / route.length
+  const k = Math.cos((lat0 * Math.PI) / 180)
+  const xs = route.map((p) => p[1] * k)
+  const ys = route.map((p) => -p[0])
+  const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+  const w = 400
+  const pad = 12
+  const scale = Math.min((w - 2 * pad) / (maxX - minX || 1), (height - 2 * pad) / (maxY - minY || 1))
+  const pts = xs.map((x, i) => [pad + (x - minX) * scale + ((w - 2 * pad) - (maxX - minX) * scale) / 2, pad + (ys[i] - minY) * scale + ((height - 2 * pad) - (maxY - minY) * scale) / 2])
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+  const [s, e] = [pts[0], pts[pts.length - 1]]
+  return (
+    <svg viewBox={`0 0 ${w} ${height}`} className="w-full" role="img" aria-label="Route shape">
+      <path d={d} fill="none" stroke="var(--series-1)" strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={s[0]} cy={s[1]} r={6} fill="var(--color-good)" stroke="var(--surface)" strokeWidth={2} />
+      <circle cx={e[0]} cy={e[1]} r={6} fill="var(--ink)" stroke="var(--surface)" strokeWidth={2} />
+    </svg>
+  )
+}

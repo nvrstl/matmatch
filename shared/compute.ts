@@ -5,6 +5,7 @@ import { planNextWeek } from './analytics/plan'
 import { halfPredictionHistory, hrContext, isPaceRun, predictRaces } from './analytics/predict'
 import { readiness } from './analytics/readiness'
 import type { Dataset } from './dataset'
+import { weekStart } from './dates'
 import type { Activity, Overview, PredictionResult, Progress, SeriesPoint, Settings, Sport, WeekPlan } from './types'
 
 export interface Computed {
@@ -115,7 +116,7 @@ export function progress(c: Computed): Progress {
   }
 }
 
-export function plan(c: Computed, settings: Settings): WeekPlan {
+export function plan(c: Computed, settings: Settings, which: 'current' | 'next' = 'next'): WeekPlan {
   return planNextWeek({
     acts: c.ds.activities,
     settings,
@@ -123,7 +124,39 @@ export function plan(c: Computed, settings: Settings): WeekPlan {
     predictedHalfSeconds: c.predictions.predictions.find((p) => p.race === 'half')?.seconds ?? null,
     readiness: currentReadiness(c),
     today: c.today,
+    which,
   })
+}
+
+/** Where plans are kept, so "what was planned" stays fixed once a week has started. */
+export interface PlanStore {
+  get(weekStart: string): WeekPlan | null
+  set(plan: WeekPlan): void
+  remove(weekStart: string): void
+}
+
+/**
+ * A future week is re-planned every time (it adapts to the latest data); once the week starts, the
+ * plan is frozen so each day's session, and the comparison with what you ran, stays put.
+ */
+export function resolvePlan(
+  c: Computed,
+  settings: Settings,
+  which: 'current' | 'next',
+  store: PlanStore,
+  /** false while data is still downloading: plan from what's there, but don't freeze it */
+  dataComplete = true,
+): WeekPlan {
+  const fresh = plan(c, settings, which)
+  const saved = store.get(fresh.weekStart)
+  if (saved && fresh.weekStart <= c.today) return saved
+  if (dataComplete) store.set(fresh)
+  return fresh
+}
+
+/** The planned session for a date, if a plan for that week was ever made. */
+export function plannedDay(date: string, store: PlanStore) {
+  return store.get(weekStart(date))?.days.find((d) => d.date === date) ?? null
 }
 
 export function activitiesPage(acts: Activity[], sport: string, q: string, page: number) {
@@ -137,3 +170,5 @@ export function activitiesPage(acts: Activity[], sport: string, q: string, page:
   }
   return { total: filtered.length, items: filtered.slice(page * 50, page * 50 + 50) }
 }
+
+export const activityById = (acts: Activity[], id: number) => acts.find((a) => a.id === id) ?? null

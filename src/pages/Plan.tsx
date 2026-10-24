@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { PlanDay, Settings, WeekPlan } from '../../shared/types'
 import { Bars } from '../components/charts'
-import { Card, Loading, PageHeader, StatusPill, buttonCls, inputCls } from '../components/ui'
+import { Card, Loading, PageHeader, Segmented, StatusPill, buttonCls, inputCls } from '../components/ui'
 import { apiFetch, useApi } from '../lib/api'
 import { fmtDate, fmtPace, fmtTime, parseTime } from '../lib/format'
 
@@ -26,7 +26,8 @@ const KIND_MARK: Record<PlanDay['kind'], { label: string; color: string }> = {
 }
 
 export default function Plan() {
-  const { data, error, reload } = useApi<WeekPlan>('/plan')
+  const [which, setWhich] = useState<'current' | 'next'>('next')
+  const { data, error, reload } = useApi<WeekPlan>(which === 'current' ? '/plan?week=current' : '/plan')
   if (!data) return <Loading error={error} />
   const p = data.paces
   const history = [
@@ -36,9 +37,20 @@ export default function Plan() {
 
   return (
     <>
+      <div className="mb-4">
+        <Segmented
+          value={which}
+          onChange={setWhich}
+          options={[
+            { value: 'current', label: 'This week' },
+            { value: 'next', label: 'Next week' },
+          ]}
+        />
+      </div>
       <PageHeader title={`Week of ${fmtDate(data.weekStart, { day: 'numeric', month: 'long' })}`}>
-        A recommendation for your next training week, aimed at running a faster half marathon. It adapts to your recent
-        volume, recovery signals and (if set) your goal race.
+        {which === 'current'
+          ? 'This week’s plan, fixed since the week began so you can check each run against it.'
+          : 'A recommendation for your next training week, aimed at running a faster half marathon. It adapts to your recent volume, recovery signals and (if set) your goal race.'}
       </PageHeader>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

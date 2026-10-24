@@ -3,6 +3,7 @@ import type { Prediction, PredictionResult } from '../../shared/types'
 import { RACES } from '../../shared/types'
 import { timeFor, vdotFor } from '../../shared/vdot'
 import { Card, Empty, Loading, PageHeader, StatusPill, inputCls } from '../components/ui'
+import { RacesTabs } from '../components/RacesTabs'
 import { useApi } from '../lib/api'
 import { fmtDate, fmtPace, fmtTime, parseTime } from '../lib/format'
 
@@ -23,6 +24,7 @@ export default function Races() {
   const others = data.predictions.filter((p) => p.race !== 'half')
   return (
     <>
+      <RacesTabs />
       <PageHeader title="Race predictions">
         Built from your own best recent efforts (Daniels’ VDOT model), discounted for time since the effort, and adjusted
         for whether your recent volume and long runs support the distance. Current VDOT{' '}

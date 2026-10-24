@@ -7,6 +7,7 @@
 //   GET /api/garmin?part=profile      header x-garmin-token
 //   GET /api/garmin?part=activities&today=YYYY-MM-DD[&since=YYYY-MM-DD]
 //   GET /api/garmin?part=wellness&from=YYYY-MM-DD&to=YYYY-MM-DD   (at most 366 days)
+//   GET /api/garmin?part=activity&id=123  → laps, km splits, trace, route and HR zones of one run
 //
 // The browser keeps the 24h token and reuses it, because Garmin rate-limits token requests.
 // A 401 response with { reason: 'token' } means "get a new token"; { reason: 'key' } means the
@@ -15,7 +16,7 @@
 import { chunks } from '../shared/chunks.js'
 import { daysBetween } from '../shared/dates.js'
 import { GarminApiError, GarminClient } from '../server/garmin/client.js'
-import { fetchActivities, fetchDaily, fetchHrv, fetchProfile, fetchSleep, fetchWeight, RANGE_DAYS } from '../server/garmin/fetch.js'
+import { fetchActivities, fetchDaily, fetchHrv, fetchProfile, fetchSleep, fetchWeight, fetchWorkout, RANGE_DAYS } from '../server/garmin/fetch.js'
 
 export const maxDuration = 60
 
@@ -73,6 +74,12 @@ export async function GET(request: Request): Promise<Response> {
           availableTrainingDays: p?.availableTrainingDays ?? [],
           preferredLongTrainingDays: p?.preferredLongTrainingDays ?? [],
         })
+      }
+      case 'activity': {
+        const id = url.searchParams.get('id')
+        if (!id || !/^\d{1,20}$/.test(id)) return json({ error: 'Bad activity id' }, 400)
+        const detail = await fetchWorkout(client, Number(id))
+        return detail ? json(detail) : json({ error: 'Garmin has no file for this activity.' }, 404)
       }
       case 'activities': {
         const since = url.searchParams.get('since')

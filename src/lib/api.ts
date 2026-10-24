@@ -46,12 +46,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 export function useApi<T>(path: string) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadedPath, setLoadedPath] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
   useEffect(() => {
     let alive = true
     apiFetch<T>(path)
-      .then((d) => alive && (setData(d), setError(null)))
-      .catch((e: Error) => alive && setError(e.message))
+      .then((d) => alive && (setData(d), setError(null), setLoadedPath(path)))
+      .catch((e: Error) => alive && (setError(e.message), setLoadedPath(path)))
     return () => {
       alive = false
     }
@@ -68,5 +69,7 @@ export function useApi<T>(path: string) {
     }
   }, [path])
   const reload = useCallback(() => setTick((t) => t + 1), [])
-  return { data, error, reload }
+  /** true once the current path has answered (data may legitimately be null) */
+  const loaded = loadedPath === path
+  return { data, error, reload, loaded }
 }

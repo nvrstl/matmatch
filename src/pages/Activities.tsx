@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import type { Activity } from '../../shared/types'
 import { Card, Loading, PageHeader, Segmented, inputCls } from '../components/ui'
 import { useApi } from '../lib/api'
@@ -14,6 +15,7 @@ export default function Activities() {
     `/activities?sport=${sport}&q=${encodeURIComponent(q)}&page=${page}`,
   )
   const pages = data ? Math.ceil(data.total / 50) : 0
+  const navigate = useNavigate()
 
   return (
     <>
@@ -53,10 +55,12 @@ export default function Activities() {
               </thead>
               <tbody className="divide-y divide-line">
                 {data.items.map((a) => (
-                  <tr key={a.id}>
+                  <tr key={a.id} className="cursor-pointer hover:bg-[var(--wash)]" onClick={() => navigate(`/activity/${a.id}`)}>
                     <td className="whitespace-nowrap py-2 text-ink-2">{fmtDate(a.date)}</td>
                     <td className="py-2">
-                      {a.name}
+                      <Link to={`/activity/${a.id}`} className="font-medium text-ink" onClick={(e) => e.stopPropagation()}>
+                        {a.name}
+                      </Link>
                       <div className="text-[11px] text-muted">{a.typeKey.replace(/_/g, ' ')}</div>
                     </td>
                     <td className="py-2 text-right">{a.distanceM ? `${fmtKm(a.distanceM / 1000, 2)} km` : '–'}</td>

@@ -167,3 +167,26 @@ export interface Progress {
   steps: SeriesPoint[]
   easyPace: SeriesPoint[]
 }
+
+/** One run in detail, decoded from its FIT file. */
+export interface WorkoutDetail {
+  id: number
+  /** laps as recorded on the watch (auto-laps or button presses) */
+  laps: {
+    index: number
+    distanceM: number
+    durationS: number
+    avgHr: number | null
+    maxHr: number | null
+    elevGainM: number | null
+    intensity: string | null
+  }[]
+  /** whole kilometres, computed from the GPS track; the last one may be partial */
+  kmSplits: { km: number; distanceM: number; durationS: number; avgHr: number | null; elevGainM: number }[]
+  /** downsampled trace by distance: elapsed moving time, heart rate, pace (s/km), altitude */
+  trace: { d: number; t: number; hr: number | null; pace: number | null; alt: number | null }[]
+  /** [lat, lon] in degrees, downsampled */
+  route: [number, number][]
+  /** time in each heart-rate zone using the zones set on the watch */
+  hrZones: { zone: number; lowBpm: number; highBpm: number; seconds: number }[] | null
+}

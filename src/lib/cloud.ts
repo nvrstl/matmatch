@@ -2,10 +2,10 @@
 // from Garmin through the password-protected /api/garmin function, and every view is computed
 // in the browser with the same code the local server uses.
 import { chunks } from '../../shared/chunks'
-import { activitiesPage, overview, plan, prepare, progress, type Computed } from '../../shared/compute'
+import { activitiesPage, activityById, overview, plannedDay, prepare, progress, resolvePlan, type Computed, type PlanStore } from '../../shared/compute'
 import { cleanSettings, effectiveSettings, emptyDataset, mergeDataset, type Dataset, type ProfilePrefs } from '../../shared/dataset'
-import { addDays, localToday } from '../../shared/dates'
-import type { Activity, Settings, SyncStatus } from '../../shared/types'
+import { addDays, localToday, weekStart } from '../../shared/dates'
+import type { Activity, Settings, SyncStatus, WeekPlan, WorkoutDetail } from '../../shared/types'
 
 export const IS_CLOUD = Boolean(import.meta.env.VITE_CLOUD)
 
@@ -34,6 +34,16 @@ async function idbSet(key: string, value: unknown): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('kv', 'readwrite')
     tx.objectStore('kv').put(value, key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+async function idbClear(): Promise<void> {
+  const db = await idb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', 'readwrite')
+    tx.objectStore('kv').clear()
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
@@ -213,8 +223,8 @@ export async function disconnect() {
 async function forgetDeviceData() {
   dataset = emptyDataset()
   meta = { lastSync: null, finishedAt: null }
-  await idbSet('dataset', dataset).catch(() => {})
-  await idbSet('meta', meta).catch(() => {})
+  await idbClear().catch(() => {}) // data, metadata and cached workouts
+  clearPlans()
   changed()
 }
 
@@ -276,7 +286,9 @@ export async function sync(full = false): Promise<void> {
       changed()
     }
 
+    const wasFirst = !incremental
     meta = { lastSync: today, finishedAt: new Date().toISOString(), pending: null }
+    if (wasFirst) clearPlans() // plans made before the full history arrived are re-made from it
     await save()
     report('done', 'Up to date')
     changed()
@@ -300,6 +312,39 @@ export async function autoSync() {
 }
 
 // ---------------------------------------------------------------------------
+// Plans per week (frozen once the week starts), in localStorage
+
+const PLAN = 'lifelong:plan:'
+const plans: PlanStore = {
+  get: (w) => {
+    try {
+      return JSON.parse(ls.get(PLAN + w) ?? 'null') as WeekPlan | null
+    } catch {
+      return null
+    }
+  },
+  set: (p) => ls.set(PLAN + p.weekStart, JSON.stringify(p)),
+  remove: (w) => ls.set(PLAN + w, null),
+}
+
+function clearPlans() {
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith(PLAN)) localStorage.removeItem(k)
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** One run in detail: from this device if fetched before, otherwise from Garmin (then kept). */
+async function workout(id: string): Promise<WorkoutDetail> {
+  const cached = await idbGet<WorkoutDetail>(`workout:${id}`).catch(() => undefined)
+  if (cached) return cached
+  const detail = await garmin<WorkoutDetail>({ part: 'activity', id })
+  await idbSet(`workout:${id}`, detail).catch(() => {})
+  return detail
+}
+
+// ---------------------------------------------------------------------------
 // The same routes the local server answers
 
 const settings = (): Settings => {
@@ -320,6 +365,7 @@ export async function cloudFetch<T>(path: string, init?: RequestInit): Promise<T
   if (p === '/settings' && method === 'PUT') {
     const next = { ...settings(), ...cleanSettings(JSON.parse(String(init?.body ?? '{}'))) }
     ls.set('lifelong:settings', JSON.stringify(next))
+    plans.remove(weekStart(localToday())) // new goal or schedule: re-plan the current week too
     changed()
     return settings() as T
   }
@@ -327,6 +373,9 @@ export async function cloudFetch<T>(path: string, init?: RequestInit): Promise<T
     void sync(url.searchParams.get('full') === '1')
     return { ...status, running: true } as T
   }
+  if (p.startsWith('/activities/')) return activityById(dataset.activities, Number(p.slice('/activities/'.length))) as T
+  if (p.startsWith('/activity/')) return (await workout(p.slice('/activity/'.length))) as T
+  if (p.startsWith('/planned/')) return plannedDay(p.slice('/planned/'.length), plans) as T
   switch (p) {
     case '/overview':
       return overview(current()) as T
@@ -335,7 +384,13 @@ export async function cloudFetch<T>(path: string, init?: RequestInit): Promise<T
     case '/predictions':
       return current().predictions as T
     case '/plan':
-      return plan(current(), settings()) as T
+      return resolvePlan(
+        current(),
+        settings(),
+        url.searchParams.get('week') === 'current' ? 'current' : 'next',
+        plans,
+        meta.lastSync !== null && !meta.pending, // never freeze a plan made from half-downloaded data
+      ) as T
     case '/settings':
       return settings() as T
     case '/activities':

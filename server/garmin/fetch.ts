@@ -2,6 +2,7 @@
 // which the local SQLite store keeps). Shared by the local sync and the hosted (Vercel) function.
 import type { Activity } from '../../shared/types.js'
 import type { GarminClient } from './client.js'
+import { decodeActivityFile } from './fit.js'
 import { mapActivity, mapDaily, mapHrv, mapSleep, mapWeight } from './map.js'
 
 type Obj = Record<string, unknown>
@@ -68,4 +69,10 @@ export async function fetchWeight(client: GarminClient, from: string, to: string
     if (row?.kg) out.push({ row, raw })
   }
   return out
+}
+
+/** One activity in detail (laps, km splits, trace, route, HR zones) from its original FIT file. */
+export async function fetchWorkout(client: GarminClient, id: number) {
+  const bytes = await client.getBytes(`/download-service/files/activity/${id}`)
+  return bytes ? decodeActivityFile(bytes, id) : null
 }

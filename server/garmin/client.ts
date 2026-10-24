@@ -91,6 +91,28 @@ export class GarminClient {
     return this.token
   }
 
+  /** Download a file (e.g. an activity's original FIT upload) as bytes. */
+  async getBytes(path: string): Promise<Uint8Array | null> {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(new URL(path, API_BASE), { headers: { Authorization: `Bearer ${await this.getToken()}` } })
+      if (res.status === 204 || res.status === 404) return null
+      if (res.ok) return new Uint8Array(await res.arrayBuffer())
+      if (res.status === 401 && attempt === 0) {
+        this.token = null
+        continue
+      }
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers.get('retry-after')) || 30
+        if (retryAfter * 1000 > this.maxWaitMs || attempt >= 3) {
+          throw new GarminApiError(429, 'Garmin asks to slow down for a moment.', retryAfter)
+        }
+        await sleep(retryAfter * 1000)
+        continue
+      }
+      throw new GarminApiError(res.status, `GET ${path} → ${res.status}`)
+    }
+  }
+
   async get<T>(path: string, query: Record<string, string | number | boolean | undefined> = {}): Promise<T | null> {
     const url = new URL(path, API_BASE)
     for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, String(v))

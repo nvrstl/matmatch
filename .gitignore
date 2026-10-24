@@ -30,3 +30,4 @@ dist-ssr
 
 # Local Garmin data (personal health data — never commit)
 data/
+dist-snapshot

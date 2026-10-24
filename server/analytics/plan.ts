@@ -80,7 +80,9 @@ export function planNextWeek({ acts, settings, vdot, predictedHalfSeconds, readi
   const last3 = completed.slice(-3).map((w) => w.km)
   const avg3 = last3.reduce((a, b) => a + b, 0) / last3.length
   const maxRecent = Math.max(...completed.map((w) => w.km))
-  const rising = last3.length === 3 && last3[1] > last3[0] * 1.02 && last3[2] > last3[1] * 1.02
+  // Planning mid-week: if this week is already far below average, it is the down week.
+  const easingAlready = planStart !== today && current.km < avg3 * 0.6
+  const rising = !easingAlready && last3.length === 3 && last3[1] > last3[0] * 1.02 && last3[2] > last3[1] * 1.02
   const effectiveVdot = vdot ?? 40
   const goal = settings.goalHalfSeconds
   const paces = pacesFor(effectiveVdot, goal)
@@ -122,14 +124,19 @@ export function planNextWeek({ acts, settings, vdot, predictedHalfSeconds, readi
   }
   target = Math.max(10, Math.round(target))
 
-  const runDays = clamp(settings.runDaysPerWeek, 3, 7)
+  // Fewer, longer runs at low volume: aim for easy runs of at least ~6 km.
+  const runDays = clamp(Math.min(settings.runDaysPerWeek, Math.floor(target / 6)), 3, 7)
+  if (runDays < settings.runDaysPerWeek) {
+    rationale.push(`${runDays} runs instead of ${settings.runDaysPerWeek}: at ${target} km, fewer and longer runs build more endurance than many short ones.`)
+  }
   const { long, q1, q2, run } = chooseDays(settings, runDays)
   const easyRange = `${fmtPace(paces.easy[0])}–${fmtPace(paces.easy[1])}`
   const wuCd = target >= 35 ? 5 : 4 // warm-up + cool-down km around a session
 
   // ---- Long run --------------------------------------------------------------------
   const longCap = phase === 'base' ? 18 : phase === 'taper' ? 15 : phase === 'recovery' ? 14 : 22
-  const longKm = round1(clamp(target * 0.3, 6, longCap))
+  // ~30 % of the week, and always clearly the longest run (matters at low volume with few runs).
+  const longKm = round1(clamp(Math.max(target * 0.3, (target / runDays) * 1.4), 6, longCap))
   const isoWeek = Math.floor(daysBetween('2024-01-01', planStart) / 7)
   const hmFinish = (phase === 'build' || phase === 'specific') && isoWeek % 2 === 0 && longKm >= 14
   const longDay: Omit<PlanDay, 'date' | 'weekday'> = hmFinish
@@ -147,7 +154,7 @@ export function planNextWeek({ acts, settings, vdot, predictedHalfSeconds, readi
       }
 
   // ---- Quality sessions ------------------------------------------------------------
-  const tKm = clamp(target * 0.1, 3, 10)
+  const tKm = clamp(target * 0.1, 4, 10)
   const tMin = Math.round((tKm * paces.threshold) / 60 / 5) * 5 || 15
   const tReps = tMin >= 30 ? 3 : 2
   const tEach = Math.max(6, Math.round(tMin / tReps / 2) * 2) // even minutes reads cleaner

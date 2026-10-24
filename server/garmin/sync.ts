@@ -162,10 +162,12 @@ export async function runSync(opts: { full?: boolean } = {}): Promise<void> {
 
     const insWeight = db.prepare('INSERT OR REPLACE INTO weight (date, kg, bmi, body_fat) VALUES (?,?,?,?)')
     await ranged('weight', 365, async (a, b) => {
-      const rows = (await client.get<Obj[]>(`/weight-service/weight/all/${a}/${b}`)) ?? []
+      // weight/all answers 400 for ranges; the range endpoint returns each day's latest weigh-in.
+      const res = await client.get<{ dailyWeightSummaries?: Obj[] }>(`/weight-service/weight/range/${a}/${b}`)
       let n = 0
-      for (const raw of rows) {
-        const w = mapWeight(raw)
+      for (const day of res?.dailyWeightSummaries ?? []) {
+        const raw = (day.latestWeight as Obj | undefined) ?? {}
+        const w = mapWeight({ calendarDate: day.summaryDate, ...raw })
         if (!w?.kg) continue
         insWeight.run(w.date, w.kg, w.bmi, w.body_fat)
         n++

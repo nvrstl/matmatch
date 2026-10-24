@@ -94,3 +94,15 @@ body {
 .recharts-sector:focus {
   outline: none;
 }
+
+/* Side gutter that also clears a phone's side system bar */
+.gutter {
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+}
+@media (min-width: 768px) {
+  .gutter {
+    padding-left: max(2rem, env(safe-area-inset-left, 0px));
+    padding-right: max(2rem, env(safe-area-inset-right, 0px));
+  }
+}

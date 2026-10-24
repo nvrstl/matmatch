@@ -35,7 +35,8 @@ export class GarminClient {
     if (this.token && Date.now() < this.tokenExpires) return this.token
     const res = await fetch(TOKEN_URL, {
       method: 'POST',
-      headers: { Authorization: `ApiKey ${this.apiKey}`, Accept: 'application/json' },
+      // The token comes back as plain text (a JWT); asking for JSON gets 406 Not Acceptable.
+      headers: { Authorization: `ApiKey ${this.apiKey}`, Accept: '*/*' },
     })
     const text = await res.text()
     if (!res.ok) {
@@ -47,6 +48,7 @@ export class GarminClient {
       )
     }
     const token = parseToken(text)
+    if (token && token.expiresInS === null) token.expiresInS = jwtLifetime(token.value)
     if (!token) throw new GarminApiError(500, `Unexpected token response: ${text.slice(0, 200)}`)
     this.token = token.value
     // Tokens live 24h; refresh a bit early.
@@ -102,4 +104,14 @@ export function parseToken(text: string): { value: string; expiresInS: number | 
   if (typeof value !== 'string') return null
   const exp = o.expires_in ?? o.expiresIn
   return { value, expiresInS: typeof exp === 'number' ? exp : null }
+}
+
+/** Seconds until a JWT's `exp`, or null if it isn't a readable JWT. */
+function jwtLifetime(token: string): number | null {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()) as { exp?: number }
+    return payload.exp ? payload.exp - Math.floor(Date.now() / 1000) : null
+  } catch {
+    return null
+  }
 }

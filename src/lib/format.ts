@@ -1,36 +1,34 @@
-/** 'HH:MM:SS' or 'HH:MM' -> 'HH:MM' */
-export function shortTime(t: string): string {
-  return t.slice(0, 5)
+export function fmtTime(s: number): string {
+  const r = Math.round(s)
+  const h = Math.floor(r / 3600)
+  const m = Math.floor((r % 3600) / 60)
+  const sec = r % 60
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`
 }
 
-/** 'YYYY-MM-DD' -> e.g. 'di 9 jun 2026' (nl-BE) */
-export function formatDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`)
-  return d.toLocaleDateString('nl-BE', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  })
+export const fmtPace = (secPerKm: number) => `${fmtTime(secPerKm)}/km`
+
+export const fmtKm = (km: number, digits = 0) =>
+  km.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })
+
+export const compact = (n: number) =>
+  n.toLocaleString(undefined, { notation: n >= 10_000 ? 'compact' : 'standard', maximumFractionDigits: 1 })
+
+export const fmtDate = (d: string, opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' }) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString(undefined, opts)
+
+/** "1:29:30" or "89:30" → seconds */
+export function parseTime(s: string): number | null {
+  const parts = s.trim().split(':').map(Number)
+  if (!parts.length || parts.some((p) => !Number.isFinite(p) || p < 0)) return null
+  return parts.reduce((acc, p) => acc * 60 + p, 0) || null
 }
 
-export function formatRate(rate: number | null | undefined): string {
-  if (rate == null) return 'In overleg'
-  return `€${Number(rate).toFixed(0)}`
-}
-
-export function initials(name: string): string {
-  return name
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? '')
-    .join('')
-}
-
-/** Today as 'YYYY-MM-DD' in local time, for date input min values. */
-export function todayISO(): string {
-  const d = new Date()
-  const off = d.getTimezoneOffset()
-  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10)
+export const SPORT_LABEL: Record<string, string> = {
+  run: 'Running',
+  bike: 'Cycling',
+  swim: 'Swimming',
+  walk: 'Walking & hiking',
+  strength: 'Strength & cardio',
+  other: 'Other',
 }

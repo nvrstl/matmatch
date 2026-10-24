@@ -1,23 +1,33 @@
 {
-  "name": "matmatch",
+  "name": "lifelong",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "tsx watch --clear-screen=false server/index.ts",
+    "demo": "npm run demo:seed && LIFELONG_DB=data/demo.db tsx server/index.ts",
+    "demo:seed": "LIFELONG_DB=data/demo.db tsx server/cli/demo.ts",
+    "sync": "tsx server/cli/sync.ts",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "test": "tsx --test 'server/**/*.test.ts'",
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.107.0",
+    "express": "^5.1.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.17.0"
+    "react-router-dom": "^7.17.0",
+    "recharts": "^3.2.1",
+    "tsx": "^4.20.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.3.0",
+    "@types/express": "^5.0.3",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

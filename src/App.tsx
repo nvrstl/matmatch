@@ -1,57 +1,56 @@
-import { Route, Routes } from 'react-router-dom'
-import Layout from './components/Layout'
-import ProtectedRoute from './components/ProtectedRoute'
-import Landing from './pages/Landing'
-import Login from './pages/Login'
-import Signup from './pages/Signup'
-import TeacherProfile from './pages/TeacherProfile'
-import BrowseTeachers from './pages/BrowseTeachers'
-import TeacherDetail from './pages/TeacherDetail'
-import Bookings from './pages/Bookings'
+import { NavLink, Route, Routes } from 'react-router-dom'
+import Activities from './pages/Activities'
+import Overview from './pages/Overview'
+import Plan from './pages/Plan'
+import Progress from './pages/Progress'
+import Races from './pages/Races'
+import Sync from './pages/Sync'
+
+const NAV = [
+  { to: '/', label: 'Overview' },
+  { to: '/progress', label: 'Lifelong progress' },
+  { to: '/races', label: 'Race predictions' },
+  { to: '/plan', label: 'Next week' },
+  { to: '/activities', label: 'Activities' },
+  { to: '/sync', label: 'Sync' },
+]
 
 export default function App() {
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route index element={<Landing />} />
-        <Route path="login" element={<Login />} />
-        <Route path="signup" element={<Signup />} />
-
-        <Route
-          path="profile"
-          element={
-            <ProtectedRoute role="teacher">
-              <TeacherProfile />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="teachers"
-          element={
-            <ProtectedRoute>
-              <BrowseTeachers />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="teachers/:id"
-          element={
-            <ProtectedRoute>
-              <TeacherDetail />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="bookings"
-          element={
-            <ProtectedRoute>
-              <Bookings />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route path="*" element={<Landing />} />
-      </Route>
-    </Routes>
+    <div className="min-h-screen md:flex">
+      <aside className="border-b border-line bg-surface md:sticky md:top-0 md:h-screen md:w-56 md:shrink-0 md:border-r md:border-b-0">
+        <div className="flex items-center gap-2 px-4 py-3 md:px-5 md:py-5">
+          <img src="/favicon.svg" alt="" className="h-7 w-7" />
+          <div>
+            <div className="text-[15px] font-semibold leading-tight">Lifelong</div>
+            <div className="text-[11px] text-muted">Your Garmin history</div>
+          </div>
+        </div>
+        <nav className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:px-3">
+          {NAV.map((n) => (
+            <NavLink
+              key={n.to}
+              to={n.to}
+              end
+              className={({ isActive }) =>
+                `whitespace-nowrap rounded-lg px-3 py-2 text-sm transition ${isActive ? 'bg-[var(--wash)] font-medium text-ink' : 'text-ink-2 hover:text-ink'}`
+              }
+            >
+              {n.label}
+            </NavLink>
+          ))}
+        </nav>
+      </aside>
+      <main className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8 md:py-8">
+        <Routes>
+          <Route path="/" element={<Overview />} />
+          <Route path="/progress" element={<Progress />} />
+          <Route path="/races" element={<Races />} />
+          <Route path="/plan" element={<Plan />} />
+          <Route path="/activities" element={<Activities />} />
+          <Route path="/sync" element={<Sync />} />
+        </Routes>
+      </main>
+    </div>
   )
 }

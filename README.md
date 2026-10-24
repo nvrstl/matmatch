@@ -1,88 +1,70 @@
-# Matmatch 🧘
+# Lifelong
 
-A two-sided yoga marketplace for Belgium (Dutch). **Yoga teachers** build a profile and
-set their availability; **yoga schools** browse them and send a **booking request** for a
-specific date/time, which the teacher then **accepts or declines**. Rates are shown
-(no in-app payment yet).
+A private dashboard for **your whole Garmin history**, focused on running a faster half marathon.
 
-## Stack
+- **Lifelong progress**: predicted half-marathon time month by month since your first run, with your actual half-marathon efforts overlaid. Also yearly training hours by sport, monthly running volume, aerobic efficiency (easy-run pace), fitness (training load), VO₂max, resting HR, HRV, sleep, weight and steps.
+- **Race predictions** for 5K, 10K, half marathon and marathon, with a likely range, a confidence level and the effort each one is based on. It also lists your personal bests and works out what a goal half-marathon time would require.
+- **Next week's training plan**: a 7-day plan with paces, built around half-marathon performance. It adapts to your recent volume, recovery signals (resting HR, HRV, sleep, form) and your goal race date and time.
 
-- React 19 + Vite + TypeScript
-- Tailwind CSS v4
-- React Router
-- Supabase (Auth + Postgres + Row Level Security)
+It runs on your own computer. Your data goes from Garmin into a local SQLite file (`data/lifelong.db`) and nowhere else. The server only listens on `localhost`.
 
-## One-time setup
+## Setup
 
-### 1. Create the database tables
-
-The Supabase project URL + publishable key are already in [`.env`](.env). Now create the
-schema:
-
-1. Open your Supabase project → **SQL Editor**.
-2. Paste the entire contents of [`supabase/schema.sql`](supabase/schema.sql) and **Run**.
-   (Safe to re-run — it uses `if not exists` / `drop policy if exists`.)
-3. Paste [`supabase/storage.sql`](supabase/storage.sql) and **Run** too — this creates the
-   public `avatars` bucket used for teacher **profile photos**.
-
-### 2. Turn OFF email confirmation (for the prototype)
-
-Supabase by default emails a confirmation link before a user gets a session. Because the
-app creates the user's profile row **right after sign-up** (which needs an active session),
-disable confirmation while testing:
-
-> Supabase → **Authentication → Sign In / Providers → Email** → turn **"Confirm email" OFF** → Save.
-
-(For production you'd keep confirmation on and create the profile row after the user
-confirms — e.g. via a database trigger on `auth.users`.)
-
-## Run
+Requires Node.js ≥ 22.13.
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
-npm run build    # type-check + production build into dist/
+cp .env.example .env      # then paste your key into .env
+npm run sync              # first sync pulls your whole history (can take a while)
+npm run dev               # http://localhost:5173
 ```
 
-## Try the full loop
+**Getting a key:** Garmin Connect (web) → Account settings → **Personal API Key** → create it. It is shown only once and expires after the period you choose (30 days to 1 year). Garmin emails you before it expires. Put it in `.env` as `GARMIN_API_KEY=…`. Never commit `.env`; it's gitignored.
 
-1. **Sign up as a teacher** → fill in your profile (styles, city, rate), add availability
-   slots, and hit **Publiceren**.
-2. Open an incognito window and **sign up as a school**.
-3. As the school: **Zoek leraren** → open the teacher → **Boekingsaanvraag sturen**.
-4. Back as the teacher: **Boekingen** → **Accepteren** or **Weigeren**.
-5. Both sides see the updated status.
+**No key yet?** Run `npm run demo` to explore with 13 years of synthetic data. It uses a separate `data/demo.db`.
 
-## Project structure
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | App + API with hot reload |
+| `npm run sync` | Incremental sync (only new data). You can also use the **Sync** page. |
+| `npm run sync -- --full` | Download everything again |
+| `npm run build && npm start` | Production build served by the same server |
+| `npm run demo` | Seed demo data and start the app on it |
+| `npm test` | Unit tests for the prediction and planning logic |
+
+## How the numbers are made
+
+**Race predictions** (`server/analytics/predict.ts`)
+
+1. Every outdoor run produces *efforts*. These are the run as a whole plus Garmin's fastest 5K/10K/HM/M splits inside it. Treadmill, virtual and trail runs are excluded because their pace isn't comparable.
+2. Each effort becomes a **VDOT** (Jack Daniels' model). Efforts older than 4 weeks are discounted by 0.3 %/week for detraining. Only the last 12 months count.
+3. A heart-rate-based estimate (pace vs. % of heart-rate reserve on steady runs) does two jobs. It filters GPS glitches: an effort far above what your HR says is possible gets ignored. It also keeps the number current when your best effort is old.
+4. VDOT is converted to equivalent race times. For the half and the marathon, an **endurance penalty** is added when your recent weekly km and longest run don't yet support the distance. VDOT assumes you trained for the distance, and predictions from short races are famously optimistic for the marathon.
+5. Garmin's own VO₂max is shown as a cross-check only. Watch VO₂max tends to be optimistic compared with real races.
+
+**Weekly plan** (`server/analytics/plan.ts`)
+
+- **Volume:** builds about 8 % on your last-3-week average, capped at 10 % above your biggest recent week. After three rising weeks you get a down week (~80 %). It holds steady when readiness is mixed and cuts back (~70 %, no hard intervals) when it's poor.
+- **Phases** count back from your goal race: base → build (threshold + VO₂max intervals) → race-specific (threshold + half-marathon-pace reps) → taper → race week.
+- **Paces:** threshold, interval and easy paces come from current fitness. Half-marathon-pace work uses your goal pace when you set one.
+- **Schedule:** the long run goes on your chosen day, with quality sessions about 2 and 4 days after it. Rest days follow your preferences. Until you save your own settings, these come from the training-day preferences in your Garmin profile.
+
+This is a heuristic coach, not a medical tool. Listen to your body.
+
+## Data sources (Garmin Connect Personal API)
+
+`activitylist-service` (all activities, paged), `usersummary-service/v2/dailysummaries` (1-year chunks), `sleep-service` (31-day chunks), `hrv-service`, `weight-service`, `userprofile-service`. Daily data is pulled back to your first activity, or to `GARMIN_HISTORY_START` if you set it in `.env`.
+
+## Project layout
 
 ```
-src/
-  lib/        supabase client, domain types, constants (NL), format helpers
-  context/    AuthContext (session + profile + signUp/signIn/signOut)
-  components/ Layout, Navbar, ProtectedRoute, BookingModal, ui primitives
-  pages/      Landing, Signup, Login, TeacherProfile, BrowseTeachers,
-              TeacherDetail, Bookings
-supabase/
-  schema.sql  tables + RLS policies (run once in the SQL Editor)
+server/
+  index.ts            Express server (+ Vite middleware in dev), binds to localhost
+  api.ts              JSON endpoints used by the UI
+  db.ts               SQLite schema (node:sqlite) and queries
+  garmin/             Personal API client, DTO mapping, incremental sync
+  analytics/          predictions, training load, readiness, weekly plan (+ tests)
+  cli/                sync and demo-data commands
+shared/               types, date helpers and the VDOT model, shared with the UI
+src/                  React UI (pages: Overview, Progress, Races, Plan, Activities, Sync)
 ```
-
-## Data model
-
-- `profiles` — one per auth user, holds `role` (`teacher` | `school`) and name.
-- `teacher_profiles` — bio, styles, languages, city, rate, `is_published`.
-- `availability_slots` — weekly recurring availability per teacher.
-- `school_profiles` — school name, city, etc.
-- `bookings` — school → teacher request with `status`
-  (`pending` → `accepted` / `declined` / `cancelled`).
-
-RLS makes published teacher profiles world-readable and limits each booking to its two
-parties.
-
-## Likely next steps
-
-- Email/PDF confirmation when a booking is accepted.
-- School profile editor + photo upload (Supabase Storage).
-- Specific (non-recurring) availability + conflict checking against accepted bookings.
-- Payments (Stripe Connect) + platform commission, when ready.
-- French translation for Wallonia/Brussels.
-# matmatch

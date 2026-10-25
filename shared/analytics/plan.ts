@@ -39,6 +39,13 @@ const RACE_PROFILE: Record<RaceKey, { longCap: number; peakFloor: number; peakGr
   marathon: { longCap: 32, peakFloor: 55, peakGrowth: 1.3, taperWeeks: 2, specificWeeks: 6, buildWeeks: 14, minWeeks: 12 },
 }
 
+/** How hard a plan pushes. Balanced is the default; aggressive suits experienced runners returning to known volume. */
+export const STYLE = {
+  conservative: { firstStep: 1.05, grow: 1.05, rebuild: 1.08, downEvery: 3, downTo: 0.75, peakMul: 0.95, skipRisingDown: false, qualityRoom: 0.75, longBonus: 0, raceWork: 0.85, gainMul: 0.85 },
+  balanced: { firstStep: 1.08, grow: 1.07, rebuild: 1.12, downEvery: 4, downTo: 0.8, peakMul: 1, skipRisingDown: false, qualityRoom: 0.8, longBonus: 0, raceWork: 1, gainMul: 1 },
+  aggressive: { firstStep: 1.12, grow: 1.1, rebuild: 1.18, downEvery: 4, downTo: 0.85, peakMul: 1.15, skipRisingDown: true, qualityRoom: 0.92, longBonus: 0.03, raceWork: 1.25, gainMul: 1.12 },
+} as const
+
 export function pacesFor(vdot: number, race: RaceKey = 'half', goalSeconds: number | null = null): Paces {
   const racePace = (goalSeconds ?? timeFor(vdot, METERS[race])) / (METERS[race] / 1000)
   return {
@@ -122,7 +129,8 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
   // ---- Long run --------------------------------------------------------------------
   const longCap =
     phase === 'base' ? prof.longCap * 0.8 : phase === 'taper' ? Math.min(prof.longCap * 0.65, 18) : phase === 'recovery' ? Math.min(14, prof.longCap) : prof.longCap
-  const share = race === 'marathon' ? 0.42 : race === 'half' ? 0.33 : 0.3
+  const style = STYLE[settings.planStyle ?? 'balanced']
+  const share = (race === 'marathon' ? 0.42 : race === 'half' ? 0.33 : 0.3) + style.longBonus
   // Race-specific weeks need long runs that match the distance, whatever the weekly total:
   // marathoners top out around 28–32 km, half marathoners around 18–22 km.
   const specificFloor = phase === 'specific' ? { '5k': 0, '10k': 12, half: 16, marathon: 24 }[race] : phase === 'build' ? { '5k': 0, '10k': 10, half: 14, marathon: 18 }[race] : 0
@@ -187,7 +195,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
       marathon: { reps: 2, each: round1(clamp(target * 0.2, 8, 16) / 2), rest: '3 min easy' },
     }
     const s = spec[race]
-    const reps = Math.max(1, Math.round(s.reps * scale))
+    const reps = Math.max(1, Math.round(s.reps * scale * style.raceWork))
     return {
       kind: 'racePace',
       title: `${race === '5k' || race === '10k' ? raceName.toUpperCase() : raceName[0].toUpperCase() + raceName.slice(1)} pace: ${reps} × ${s.each} km`,
@@ -266,7 +274,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
   // A small week can't hold two quality sessions plus their warm-ups: keep the key one.
   if (phase !== 'race' && q2 !== null && sessions.has(q2)) {
     const fixed = [...sessions.values()].reduce((a, x) => a + x.km, 0)
-    if (fixed > target * (race === 'marathon' ? 0.9 : 0.8)) {
+    if (fixed > target * Math.max(style.qualityRoom, race === 'marathon' ? 0.9 : 0)) {
       sessions.set(q2, strides(round1(clamp(target * 0.12, 4, 8))))
       notes.push('One quality session this week: at this volume a second would crowd out the easy running.')
     }
@@ -331,6 +339,8 @@ export function planNextWeek({ acts, settings, vdot, predictions, readiness, tod
   const goal = settings.goalTimeSeconds
   const predicted = predictions.find((p) => p.race === race)?.seconds ?? null
   const paces = pacesFor(vdot ?? 40, race, goal)
+  const style = STYLE[settings.planStyle ?? 'balanced']
+  const usual = habitualKm(acts, today)
 
   let phase = phaseFor(planStart, settings)
   const rationale: string[] = []
@@ -352,20 +362,25 @@ export function planNextWeek({ acts, settings, vdot, predictions, readiness, tod
         ? 'Recovery signals are poor (see readiness), so this is a lighter week with no hard intervals.'
         : 'Post-race week: easy running only while you recover.',
     )
-  } else if (rising) {
+  } else if (rising && !style.skipRisingDown) {
     target = base * 0.8
     phase = 'recovery'
     rationale.push('Three rising weeks in a row: take a down week (~80 %) to absorb the work, then build again.')
-  } else if (readiness.status === 'caution') {
+  } else if (readiness.status === 'caution' && settings.planStyle !== 'aggressive') {
     target = Math.max(base, completed[completed.length - 1]?.km ?? 0)
     rationale.push('Readiness is mixed, so volume holds steady this week instead of increasing.')
+  } else if (settings.planStyle === 'aggressive' && usual > base * 1.1) {
+    // Returning to volume your body already knows: go most of the way back at once.
+    target = Math.min(usual, base * 1.3, settings.weeklyKmTarget ?? Infinity)
+    rationale.push(`Aggressive plan: straight back toward your usual ${Math.round(usual)} km/week (from ${avg3.toFixed(0)} recently). Ease off if your legs or readiness complain.`)
   } else {
-    target = Math.min(base * 1.08, Math.max(maxRecent, base) * 1.1)
-    rationale.push(`Volume builds ~8 % on your recent ${avg3.toFixed(0)} km/week average (staying within 10 % of your biggest recent week).`)
+    const step = style.firstStep
+    target = Math.min(base * step, Math.max(maxRecent, base) * (settings.planStyle === 'aggressive' ? 1.2 : 1.1))
+    rationale.push(`Volume builds ~${Math.round((step - 1) * 100)} % on your recent ${avg3.toFixed(0)} km/week average.`)
   }
-  if (settings.maxWeeklyKm && target > settings.maxWeeklyKm) {
-    target = settings.maxWeeklyKm
-    rationale.push(`Capped at your ${settings.maxWeeklyKm} km/week maximum.`)
+  if (settings.weeklyKmTarget && target > settings.weeklyKmTarget) {
+    target = settings.weeklyKmTarget
+    rationale.push(`Held at your ${settings.weeklyKmTarget} km/week target.`)
   }
   target = Math.max(10, Math.round(target))
 
@@ -447,8 +462,9 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
   // your body already knows can go faster than building beyond it.
   const usual = habitualKm(inputs.acts, today)
   const distanceShare: Record<RaceKey, number> = { '5k': 0.85, '10k': 0.95, half: 1.05, marathon: 1.15 }
-  const peak = Math.min(settings.maxWeeklyKm ?? Infinity, Math.max(prof.peakFloor, startKm * prof.peakGrowth, usual * distanceShare[race]))
-  if (usual > startKm * 1.25) notes.push(`You usually run about ${Math.round(usual)} km a week, so the plan rebuilds toward that a little faster than it would build new volume.`)
+  const style = STYLE[settings.planStyle ?? 'balanced']
+  const peak = settings.weeklyKmTarget ?? Math.round(Math.max(prof.peakFloor, startKm * prof.peakGrowth, usual * distanceShare[race]) * style.peakMul)
+  if (usual > startKm * 1.25) notes.push(`You usually run about ${Math.round(usual)} km a week, so the plan rebuilds toward that faster than it would build new volume.`)
   let build = weeks[weeks.length - 1].targetKm
   let peakReached = startKm
   const MAX_WEEKS = 40
@@ -458,9 +474,9 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
     let km: number
     if (phase === 'race') km = peakReached * (race === 'marathon' ? 0.45 : 0.55)
     else if (phase === 'taper') km = peakReached * (race === 'marathon' ? (weeksOut === 2 ? 0.8 : 0.65) : 0.75)
-    else if (i % 4 === 3) km = build * 0.8 // down week every 4th week
+    else if (i % style.downEvery === style.downEvery - 1) km = build * style.downTo // regular easier week
     else {
-      build = Math.min(build * (build < usual * 0.85 ? 1.12 : 1.07), peak)
+      build = Math.min(build * (build < usual * 0.85 ? style.rebuild : style.grow), peak)
       km = build
       peakReached = Math.max(peakReached, km)
     }
@@ -482,15 +498,19 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
     })
   }
   if (daysBetween(today, raceDate) > MAX_WEEKS * 7) notes.push(`Showing the first ${MAX_WEEKS} weeks; the rest is planned as you get closer.`)
+  const top = weeks.filter((w) => w.phase !== 'race').reduce((a, w) => (w.targetKm > a.targetKm ? w : a), weeks[0])
+  if (settings.weeklyKmTarget && top.targetKm < settings.weeklyKmTarget * 0.95) {
+    notes.push(`Building safely from ${startKm} km, the plan reaches ${top.targetKm} of your ${settings.weeklyKmTarget} km/week target before the taper. Choose Aggressive or a later race to get closer.`)
+  }
 
   const prediction = predictions.find((p) => p.race === race) ?? null
-  const realism = vdot && prediction ? assessGoal({ race, raceDate, today, vdot, prediction, goalSeconds: settings.goalTimeSeconds, weeks }) : null
+  const realism = vdot && prediction ? assessGoal({ race, raceDate, today, vdot, prediction, goalSeconds: settings.goalTimeSeconds, weeks, style: settings.planStyle }) : null
   if (!realism) notes.push('Sync some outdoor runs to see how realistic your target is.')
   return { race, raceDate, goalSeconds: settings.goalTimeSeconds, weeks, realism, notes }
 }
 
 /** How realistic is the target, given current fitness, the time left and the planned training? */
-export function assessGoal({ race, raceDate, today, vdot, prediction, goalSeconds, weeks }: {
+export function assessGoal({ race, raceDate, today, vdot, prediction, goalSeconds, weeks, style = 'balanced' }: {
   race: RaceKey
   raceDate: string
   today: string
@@ -498,6 +518,7 @@ export function assessGoal({ race, raceDate, today, vdot, prediction, goalSecond
   prediction: Prediction
   goalSeconds: number | null
   weeks: WeekPlan[]
+  style?: Settings['planStyle']
 }): Realism {
   const meters = METERS[race]
   const nWeeks = Math.max(0, Math.round(daysBetween(today, raceDate) / 7))
@@ -505,7 +526,7 @@ export function assessGoal({ race, raceDate, today, vdot, prediction, goalSecond
   // returns beyond ~20 weeks.
   const buildWeeks = weeks.filter((w) => w.phase !== 'taper' && w.phase !== 'race' && w.weekStart > today).length
   const effective = Math.min(buildWeeks, 20) + Math.max(0, buildWeeks - 20) * 0.3
-  const typicalGain = Math.round(weeklyGain(vdot) * effective * 10) / 10
+  const typicalGain = Math.round(weeklyGain(vdot) * effective * STYLE[style].gainMul * 10) / 10
 
   // Endurance on race day, from the plan's peak weeks and longest planned run.
   const pre = weeks.filter((w) => w.phase !== 'taper' && w.phase !== 'race')
@@ -533,6 +554,8 @@ export function assessGoal({ race, raceDate, today, vdot, prediction, goalSecond
     else if (level === 'realistic') level = 'ambitious'
   }
   factors.push(`Today's prediction: ${fmtTime(prediction.seconds)} (VDOT ${vdot.toFixed(1)}).`)
+  if (style === 'aggressive') factors.push('Aggressive plan: more volume and race-pace work count toward the expected gain, but the injury risk is higher. Back off when legs or readiness say so.')
+  if (style === 'conservative') factors.push('Conservative plan: gentler build, so expect a little less improvement.')
   if (goalSeconds) {
     factors.push(
       gain > 0

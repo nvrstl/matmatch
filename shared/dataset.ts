@@ -52,7 +52,8 @@ export const DEFAULT_SETTINGS: Settings = {
   runDaysPerWeek: 5,
   longRunDay: 6,
   restDays: [0, 4],
-  maxWeeklyKm: null,
+  weeklyKmTarget: null,
+  planStyle: 'balanced',
 }
 
 /** Newer rows replace older ones with the same id/date. */
@@ -83,6 +84,8 @@ export function effectiveSettings(saved: Partial<Settings> | null, profile: Prof
     s.goalTimeSeconds = s.goalHalfSeconds
   }
   delete s.goalHalfSeconds
+  if (s.weeklyKmTarget == null && s.maxWeeklyKm) s.weeklyKmTarget = s.maxWeeklyKm
+  delete s.maxWeeklyKm
   if (saved) return s
   const idx = (d: string) => ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'].indexOf(d.toUpperCase())
   const avail = (profile?.availableTrainingDays ?? []).map(idx).filter((i) => i >= 0)
@@ -108,6 +111,8 @@ export function cleanSettings(b: Partial<Settings>): Partial<Settings> {
   if (typeof b.runDaysPerWeek === 'number') patch.runDaysPerWeek = Math.max(3, Math.min(7, Math.round(b.runDaysPerWeek)))
   if (typeof b.longRunDay === 'number' && b.longRunDay >= 0 && b.longRunDay <= 6) patch.longRunDay = b.longRunDay
   if (Array.isArray(b.restDays)) patch.restDays = b.restDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
-  if ('maxWeeklyKm' in b) patch.maxWeeklyKm = b.maxWeeklyKm && b.maxWeeklyKm > 0 ? b.maxWeeklyKm : null
+  if ('weeklyKmTarget' in b) patch.weeklyKmTarget = b.weeklyKmTarget && b.weeklyKmTarget >= 10 && b.weeklyKmTarget <= 250 ? Math.round(b.weeklyKmTarget) : null
+  if ('maxWeeklyKm' in b) patch.weeklyKmTarget = b.maxWeeklyKm && b.maxWeeklyKm > 0 ? Math.round(b.maxWeeklyKm) : null
+  if (b.planStyle && ['conservative', 'balanced', 'aggressive'].includes(b.planStyle)) patch.planStyle = b.planStyle
   return patch
 }

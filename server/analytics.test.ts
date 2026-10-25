@@ -181,3 +181,23 @@ test('time and pace typed without ":" (phone keypads)', () => {
   assert.equal(time('1:75:00', 21.0975), null)
   assert.equal(time('abc', 10), null)
 })
+
+test('plan style: aggressive builds higher and faster; weekly km target sets the peak', () => {
+  const acts = weeks([30, 31, 30, 29])
+  const pred = [{ race: 'half' as const, label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high' as const, basis: '', endurancePenalty: 0 }]
+  const mk = (extra: Partial<Settings>) => {
+    const settings: Settings = { ...DEFAULT_SETTINGS, goalRace: 'half', goalRaceDate: '2027-03-14', goalTimeSeconds: 5600, ...extra }
+    const base = { acts, settings, vdot: 48, predictions: pred, readiness: good, today: '2026-10-24' }
+    const b = planBlock({ ...base, current: planNextWeek({ ...base, which: 'current' }), next: planNextWeek(base) })
+    const pre = b.weeks.filter((w) => w.phase !== 'race' && w.phase !== 'taper')
+    return { b, peak: Math.max(...pre.map((w) => w.targetKm)), wk5: b.weeks[5].targetKm }
+  }
+  const cons = mk({ planStyle: 'conservative' })
+  const bal = mk({ planStyle: 'balanced' })
+  const agg = mk({ planStyle: 'aggressive' })
+  assert.ok(cons.peak < bal.peak && bal.peak < agg.peak, `${cons.peak} < ${bal.peak} < ${agg.peak}`)
+  assert.ok(agg.wk5 > bal.wk5)
+  assert.ok(agg.b.realism!.typicalGain > bal.b.realism!.typicalGain)
+  const target = mk({ planStyle: 'aggressive', weeklyKmTarget: 65 })
+  near(target.peak, 65, 2)
+})

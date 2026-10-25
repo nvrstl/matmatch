@@ -127,7 +127,12 @@ export interface Settings {
   runDaysPerWeek: number
   longRunDay: number // 0 = Monday … 6 = Sunday
   restDays: number[]
-  maxWeeklyKm: number | null
+  /** @deprecated read as weeklyKmTarget */
+  maxWeeklyKm?: number | null
+  /** weekly km you want to build to (the plan's peak); null: chosen from your history and the race */
+  weeklyKmTarget: number | null
+  /** how hard the plan pushes volume and intensity */
+  planStyle: 'conservative' | 'balanced' | 'aggressive'
 }
 
 export interface SyncStatus {

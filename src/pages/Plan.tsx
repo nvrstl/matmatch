@@ -30,6 +30,11 @@ const KIND_MARK: Record<PlanDay['kind'], { label: string; color: string }> = {
   intervals: { label: 'Quality', color: 'var(--series-2)' },
   race: { label: 'Race', color: 'var(--series-4)' },
 }
+const STYLE_HELP: Record<Settings['planStyle'], string> = {
+  conservative: 'Gentle build (+5 % a week), an easier week every 3rd week, fewer hard sessions. Good after injury or a break.',
+  balanced: 'Steady build (+7 % a week, faster while below your usual volume), an easier week every 4th week.',
+  aggressive: 'Back to your usual volume fast, +10 % a week after that, higher peak, two quality sessions and more race-pace work. Higher injury risk.',
+}
 const REALISM: Record<Realism['level'], { state: string; icon: string; color: string }> = {
   likely: { state: 'good', icon: '●', color: 'var(--color-good)' },
   realistic: { state: 'good', icon: '●', color: 'var(--color-good)' },
@@ -70,6 +75,8 @@ function GoalEditor({ initial, onSaved }: { initial: Settings; onSaved: () => vo
   const [mode, setMode] = useState<'time' | 'pace'>('time')
   const meters = RACES.find((r) => r.key === race)!.meters
   const [text, setText] = useState(initial.goalTimeSeconds ? fmtTime(initial.goalTimeSeconds) : '')
+  const [style, setStyle] = useState<Settings['planStyle']>(initial.planStyle ?? 'balanced')
+  const [kmText, setKmText] = useState(initial.weeklyKmTarget ? String(initial.weeklyKmTarget) : '')
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -93,7 +100,13 @@ function GoalEditor({ initial, onSaved }: { initial: Settings; onSaved: () => vo
     try {
       await apiFetch<Settings>('/settings', {
         method: 'PUT',
-        body: JSON.stringify({ goalRace: race, goalRaceDate: date || null, goalTimeSeconds: sane ? seconds : null }),
+        body: JSON.stringify({
+          goalRace: race,
+          goalRaceDate: date || null,
+          goalTimeSeconds: sane ? seconds : null,
+          planStyle: style,
+          weeklyKmTarget: Number(kmText) >= 10 ? Number(kmText) : null,
+        }),
       })
       setMsg('Saved. Your plan is updated.')
       onSaved()
@@ -154,6 +167,34 @@ function GoalEditor({ initial, onSaved }: { initial: Settings; onSaved: () => vo
             </div>
           </div>
         </div>
+        <div>
+          <div className="mb-1.5 text-[13px] text-ink-2">How hard should the plan push?</div>
+          <Segmented
+            value={style}
+            onChange={setStyle}
+            options={[
+              { value: 'conservative', label: 'Conservative' },
+              { value: 'balanced', label: 'Balanced' },
+              { value: 'aggressive', label: 'Aggressive' },
+            ]}
+          />
+          <p className="mt-1.5 text-[12px] text-muted">{STYLE_HELP[style]}</p>
+        </div>
+        <label className="block max-w-56 text-[13px] text-ink-2">
+          Weekly km you want to reach
+          <input
+            id="goal-km"
+            type="number"
+            inputMode="numeric"
+            min={10}
+            max={250}
+            className={`${inputCls} mt-1 tabular`}
+            placeholder="automatic"
+            value={kmText}
+            onChange={(e) => setKmText(e.target.value)}
+          />
+          <span className="mt-1 block text-[12px] text-muted">The plan's peak. Leave empty to base it on your usual volume and the race.</span>
+        </label>
         <div className="flex flex-wrap items-center gap-3">
           <button className={buttonCls} disabled={saving || !date} onClick={save}>
             {saving ? 'Saving…' : 'Make my plan'}
@@ -372,8 +413,8 @@ function ScheduleEditor({ initial, onSaved }: { initial: Settings; onSaved: () =
     setSaving(true)
     setMsg(null)
     try {
-      const { runDaysPerWeek, longRunDay, restDays, maxWeeklyKm } = s
-      await apiFetch<Settings>('/settings', { method: 'PUT', body: JSON.stringify({ runDaysPerWeek, longRunDay, restDays, maxWeeklyKm }) })
+      const { runDaysPerWeek, longRunDay, restDays } = s
+      await apiFetch<Settings>('/settings', { method: 'PUT', body: JSON.stringify({ runDaysPerWeek, longRunDay, restDays }) })
       setMsg('Saved. Your plan is updated.')
       onSaved()
     } catch (e) {
@@ -387,7 +428,7 @@ function ScheduleEditor({ initial, onSaved }: { initial: Settings; onSaved: () =
 
   return (
     <Card title="Your week" subtitle="When you run. Seeded from your Garmin training-day preferences until you save.">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2">
         <label className="text-[13px] text-ink-2">
           Runs per week
           <select className={`${inputCls} mt-1`} value={s.runDaysPerWeek} onChange={(e) => setS({ ...s, runDaysPerWeek: Number(e.target.value) })}>
@@ -403,10 +444,6 @@ function ScheduleEditor({ initial, onSaved }: { initial: Settings; onSaved: () =
               <option key={d} value={i}>{d}</option>
             ))}
           </select>
-        </label>
-        <label className="text-[13px] text-ink-2">
-          Max km per week (optional)
-          <input type="number" min={0} className={`${inputCls} mt-1`} value={s.maxWeeklyKm ?? ''} onChange={(e) => setS({ ...s, maxWeeklyKm: e.target.value ? Number(e.target.value) : null })} />
         </label>
         <fieldset className="text-[13px] text-ink-2 sm:col-span-2">
           <legend>Preferred rest days</legend>

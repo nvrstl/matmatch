@@ -6,7 +6,8 @@ import { vdotFor } from '../../shared/vdot'
 import { Card, Loading, PageHeader, Segmented, inputCls } from '../components/ui'
 import { RacesTabs } from '../components/RacesTabs'
 import { useApi } from '../lib/api'
-import { fmtPace, fmtTime, parseTime } from '../lib/format'
+import { parseTimeInput } from '../../shared/timeinput'
+import { fmtPace, fmtTime } from '../lib/format'
 
 const remember = {
   get: (k: string) => {
@@ -46,7 +47,7 @@ function PacingCard({ pred, settings }: { pred: PredictionResult; settings: Sett
   const [targetText, setTargetText] = useState(() => defaultTarget(race))
   const [strategy, setStrategy] = useState<Strategy>(() => (remember.get('strategy') as Strategy) || 'negative')
 
-  const target = parseTime(targetText)
+  const target = parseTimeInput(targetText, { kind: 'time', meters })
   const valid = target !== null && target / (meters / 1000) > 150 && target / (meters / 1000) < 600
   const plan = useMemo(() => (valid ? pacingPlan(meters, target!, strategy) : null), [valid, meters, target, strategy])
 
@@ -75,13 +76,16 @@ function PacingCard({ pred, settings }: { pred: PredictionResult; settings: Sett
           <span className="block">Target time</span>
           <input
             id="pacing-target"
-            inputMode="numeric"
+            inputMode="decimal"
+            enterKeyHint="done"
+            autoComplete="off"
             className={`${inputCls} mt-1 w-32 tabular`}
             value={targetText}
             onChange={(e) => {
               setTargetText(e.target.value)
               remember.set(`target:${race}`, e.target.value)
             }}
+            onBlur={() => target !== null && setTargetText(fmtTime(target))}
           />
         </label>
         <Segmented
@@ -98,7 +102,7 @@ function PacingCard({ pred, settings }: { pred: PredictionResult; settings: Sett
       </div>
 
       {!plan ? (
-        <p className="mt-4 text-sm text-ink-2">Enter a target like 1:25:00 (h:mm:ss) or 39:30 (mm:ss).</p>
+        <p className="mt-4 text-sm text-ink-2">Type your target time, digits only is fine: 12500 for 1:25:00, 3930 for 39:30.</p>
       ) : (
         <>
           <section className="mt-4 rounded-2xl border border-line bg-surface p-5">

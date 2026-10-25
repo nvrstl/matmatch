@@ -9,6 +9,7 @@ import { mapActivity } from './garmin/map'
 import { assessGoal, chooseDays, planBlock, planNextWeek } from '../shared/analytics/plan'
 import { effortsOf, endurancePenalty, predictRaces } from '../shared/analytics/predict'
 import { pacingPlan } from '../shared/pacing'
+import { parseTimeInput } from '../shared/timeinput'
 import { paceAt, timeFor, vdotFor } from '../shared/vdot'
 
 const near = (a: number, b: number, tol: number) => assert.ok(Math.abs(a - b) <= tol, `${a} not within ${tol} of ${b}`)
@@ -158,4 +159,25 @@ test('realism: needing more than is typical is ambitious, far more is unlikely',
   assert.equal(grade(2330, 12), 'realistic') // -1:10
   assert.equal(grade(2300, 12), 'ambitious') // -1:40
   assert.equal(grade(2250, 12), 'unlikely') // -2:30 in 12 weeks
+})
+
+test('time and pace typed without ":" (phone keypads)', () => {
+  const pace = (t: string) => parseTimeInput(t, { kind: 'pace' })
+  const time = (t: string, km: number) => parseTimeInput(t, { kind: 'time', meters: km * 1000 })
+  assert.equal(pace('356'), 236)
+  assert.equal(pace('3.56'), 236)
+  assert.equal(pace('3,56'), 236)
+  assert.equal(pace('3:56'), 236)
+  assert.equal(pace('4'), 240)
+  assert.equal(time('12259', 21.0975), 4979)
+  assert.equal(time('1.22.59', 21.0975), 4979)
+  assert.equal(time('125', 21.0975), 5100) // 1:25:00
+  assert.equal(time('130', 21.0975), 5400)
+  assert.equal(time('310', 42.195), 11400) // 3:10:00
+  assert.equal(time('31000', 42.195), 11400)
+  assert.equal(time('40', 10), 2400)
+  assert.equal(time('3830', 10), 2310)
+  assert.equal(time('1930', 5), 1170)
+  assert.equal(time('1:75:00', 21.0975), null)
+  assert.equal(time('abc', 10), null)
 })

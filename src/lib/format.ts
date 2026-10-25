@@ -17,13 +17,6 @@ export const compact = (n: number) =>
 export const fmtDate = (d: string, opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' }) =>
   new Date(`${d}T00:00:00`).toLocaleDateString(undefined, opts)
 
-/** "1:29:30" or "89:30" → seconds */
-export function parseTime(s: string): number | null {
-  const parts = s.trim().split(':').map(Number)
-  if (!parts.length || parts.some((p) => !Number.isFinite(p) || p < 0)) return null
-  return parts.reduce((acc, p) => acc * 60 + p, 0) || null
-}
-
 export const SPORT_LABEL: Record<string, string> = {
   run: 'Running',
   bike: 'Cycling',

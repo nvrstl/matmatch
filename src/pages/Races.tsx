@@ -5,7 +5,8 @@ import { timeFor, vdotFor } from '../../shared/vdot'
 import { Card, Empty, Loading, PageHeader, StatusPill, inputCls } from '../components/ui'
 import { RacesTabs } from '../components/RacesTabs'
 import { useApi } from '../lib/api'
-import { fmtDate, fmtPace, fmtTime, parseTime } from '../lib/format'
+import { parseTimeInput } from '../../shared/timeinput'
+import { fmtDate, fmtPace, fmtTime } from '../lib/format'
 
 const HALF = 21097.5
 
@@ -151,15 +152,24 @@ function RangeBar({ p }: { p: Prediction }) {
 
 function GoalCalculator({ current, vdot }: { current: number; vdot: number }) {
   const [goalText, setGoalText] = useState(fmtTime(Math.round((current - 120) / 60) * 60))
-  const goal = parseTime(goalText)
+  const goal = parseTimeInput(goalText, { kind: 'time', meters: HALF })
   const valid = goal && goal > 3600 && goal < 4 * 3600
   const goalVdot = valid ? vdotFor(HALF, goal) : null
   return (
     <Card title="What would a goal half take?" subtitle="Equivalent performances at the fitness your goal requires">
       <label className="block text-[13px] text-ink-2" htmlFor="goal">
-        Goal time (h:mm:ss)
+        Goal time (e.g. 12500 = 1:25:00)
       </label>
-      <input id="goal" className={`${inputCls} mt-1 block max-w-40`} value={goalText} onChange={(e) => setGoalText(e.target.value)} />
+      <input
+        id="goal"
+        inputMode="decimal"
+        enterKeyHint="done"
+        autoComplete="off"
+        className={`${inputCls} mt-1 block max-w-40 tabular`}
+        value={goalText}
+        onChange={(e) => setGoalText(e.target.value)}
+        onBlur={() => goal !== null && setGoalText(fmtTime(goal))}
+      />
       {goalVdot ? (
         <div className="mt-4 space-y-3 text-sm">
           <div>

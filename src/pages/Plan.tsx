@@ -5,7 +5,8 @@ import { localToday } from '../../shared/dates'
 import { Bars } from '../components/charts'
 import { Card, Loading, PageHeader, Segmented, StatusPill, buttonCls, inputCls } from '../components/ui'
 import { apiFetch, useApi } from '../lib/api'
-import { fmtDate, fmtPace, fmtTime, parseTime } from '../lib/format'
+import { parseTimeInput } from '../../shared/timeinput'
+import { fmtDate, fmtPace, fmtTime } from '../lib/format'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const RACE_SHORT: Record<RaceKey, string> = { '5k': '5K', '10k': '10K', half: '21K', marathon: '42K' }
@@ -72,7 +73,7 @@ function GoalEditor({ initial, onSaved }: { initial: Settings; onSaved: () => vo
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
 
-  const parsed = parseTime(text)
+  const parsed = parseTimeInput(text, { kind: mode, meters })
   const seconds = parsed === null ? null : mode === 'time' ? parsed : Math.round(parsed * (meters / 1000))
   const pace = seconds ? seconds / (meters / 1000) : null
   const sane = pace !== null && pace > 150 && pace < 600
@@ -133,14 +134,23 @@ function GoalEditor({ initial, onSaved }: { initial: Settings; onSaved: () => vo
             </div>
             <input
               id="goal-target"
-              inputMode="numeric"
+              inputMode="decimal"
+              enterKeyHint="done"
+              autoComplete="off"
               className={`${inputCls} mt-1 tabular`}
-              placeholder={mode === 'time' ? { '5k': '19:30', '10k': '40:00', half: '1:29:00', marathon: '3:10:00' }[race] : '4:15'}
+              placeholder={mode === 'time' ? { '5k': '1930 = 19:30', '10k': '4000 = 40:00', half: '12900 = 1:29:00', marathon: '31000 = 3:10:00' }[race] : '415 = 4:15/km'}
               value={text}
               onChange={(e) => setText(e.target.value)}
+              onBlur={() => parsed !== null && setText(fmtTime(parsed))}
             />
             <div className="mt-1 h-4 text-[12px] text-muted">
-              {sane && seconds ? (mode === 'time' ? `= ${fmtPace(pace!)}` : `= ${fmtTime(seconds)} finish`) : text ? 'Use h:mm:ss for a time or m:ss for a pace' : 'Optional: leave empty to train on current fitness'}
+              {sane && seconds
+                ? mode === 'time'
+                  ? `${fmtTime(seconds)} = ${fmtPace(pace!)}`
+                  : `${fmtPace(parsed!)} = ${fmtTime(seconds)} finish`
+                : text
+                  ? 'Type digits only, e.g. 12259 for 1:22:59 or 356 for 3:56/km'
+                  : 'Optional: leave empty to train on current fitness'}
             </div>
           </div>
         </div>

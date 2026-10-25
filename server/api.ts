@@ -1,5 +1,5 @@
 import { Router, json } from 'express'
-import { activitiesPage, activityById, overview, plannedDay, prepare, progress, resolvePlan, type Computed, type PlanStore } from '../shared/compute'
+import { activitiesPage, activityById, block, overview, plannedDay, prepare, progress, resolvePlan, type Computed, type PlanStore } from '../shared/compute'
 import { cleanSettings, effectiveSettings, type ProfilePrefs } from '../shared/dataset'
 import { localToday, weekStart } from '../shared/dates'
 import type { Settings, WeekPlan } from '../shared/types'
@@ -52,6 +52,7 @@ api.get('/plan', (req, res) => {
   const which = req.query.week === 'current' ? 'current' : 'next'
   res.json(resolvePlan(data(), settings(), which, plans, !getSyncStatus().running && kvGet('last_sync') !== null))
 })
+api.get('/block', (_req, res) => res.json(block(data(), settings(), plans, !getSyncStatus().running && kvGet('last_sync') !== null)))
 api.get('/planned/:date', (req, res) => res.json(plannedDay(String(req.params.date), plans)))
 
 api.get('/activities', (req, res) => {

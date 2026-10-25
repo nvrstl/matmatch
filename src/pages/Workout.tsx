@@ -63,7 +63,7 @@ export default function Workout() {
         <Big label="Avg / max HR" value={a.avgHr ? `${Math.round(a.avgHr)} / ${a.maxHr ? Math.round(a.maxHr) : '–'}` : '–'} />
       </div>
 
-      {planned.data && <PlanVerdict planned={planned.data} activity={a} bandSeconds={bandSeconds} />}
+      {planned.data && <PlanVerdict planned={planned.data} activity={a} bandSeconds={bandSeconds} trace={d?.trace ?? null} />}
 
       {detail.error && <Card><p className="text-sm text-ink-2">Couldn’t load the detailed file from Garmin: {detail.error}</p></Card>}
       {!d && !detail.error && <Card><p className="animate-pulse text-sm text-muted">Loading laps, splits and route from Garmin…</p></Card>}
@@ -224,7 +224,7 @@ function LapTable({ laps }: { laps: WorkoutDetail['laps'] }) {
 }
 
 /** Compare the run with the session planned for that day. */
-function PlanVerdict({ planned, activity, bandSeconds }: { planned: PlanDay; activity: Activity; bandSeconds: Map<string, number> }) {
+function PlanVerdict({ planned, activity, bandSeconds, trace }: { planned: PlanDay; activity: Activity; bandSeconds: Map<string, number>; trace: WorkoutDetail['trace'] | null }) {
   const km = activity.distanceM / 1000
   const kmGap = planned.km ? km - planned.km : 0
   const s = (k: string) => bandSeconds.get(k) ?? 0
@@ -238,6 +238,18 @@ function PlanVerdict({ planned, activity, bandSeconds }: { planned: PlanDay; act
       tooHard > 0.2
         ? { state: 'caution', text: `About ${Math.round(tooHard * 100)} % of this run was at threshold pace or faster. Easy days work best when they're truly easy.` }
         : { state: 'good', text: `Kept it controlled${planned.km ? `, ${kmGap >= -1 ? 'and the distance was on target' : `${fmtKm(-kmGap, 1)} km short of plan`}` : ''}.` }
+  } else if (planned.targetPace && trace) {
+    // Time at (or faster than) the session's own target pace, with 3 % leeway.
+    let atPace = 0
+    for (let i = 1; i < trace.length; i++) {
+      const dt = trace[i].t - trace[i - 1].t
+      if (dt > 0 && dt <= 60 && trace[i].pace !== null && trace[i].pace! <= planned.targetPace * 1.03) atPace += dt
+    }
+    const what = planned.kind === 'racePace' || planned.kind === 'halfPace' || planned.kind === 'race' ? 'race pace' : planned.kind === 'threshold' ? 'threshold pace' : 'interval pace'
+    verdict =
+      atPace >= 8 * 60 || (planned.kind === 'intervals' && atPace >= 4 * 60)
+        ? { state: 'good', text: `${fmtTime(atPace)} at ${what} (${fmtPace(planned.targetPace)}) or faster. That's the work this session was for.` }
+        : { state: 'caution', text: `Only ${fmtTime(atPace)} at ${what} (${fmtPace(planned.targetPace)}) or faster. The session called for more, so check the laps.` }
   } else {
     verdict =
       quality >= 8 * 60

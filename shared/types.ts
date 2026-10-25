@@ -71,6 +71,8 @@ export interface Paces {
   easy: [number, number]
   marathon: number
   half: number
+  /** pace for the goal race: your target pace, or the predicted one without a target */
+  race: number
   threshold: number
   interval: number
   repetition: number
@@ -79,10 +81,12 @@ export interface Paces {
 export interface PlanDay {
   date: string
   weekday: string
-  kind: 'rest' | 'easy' | 'long' | 'threshold' | 'halfPace' | 'intervals' | 'strides' | 'race'
+  kind: 'rest' | 'easy' | 'long' | 'threshold' | 'halfPace' | 'racePace' | 'intervals' | 'strides' | 'race'
   title: string
   km: number
   details: string
+  /** for quality sessions: the pace the work part should be run at (s/km) */
+  targetPace?: number
 }
 
 export interface WeekPlan {
@@ -91,8 +95,9 @@ export interface WeekPlan {
   targetKm: number
   recentWeeksKm: { weekStart: string; km: number }[]
   paces: Paces
-  goalHalfSeconds: number | null
-  predictedHalfSeconds: number | null
+  race: RaceKey
+  goalSeconds: number | null
+  predictedSeconds: number | null
   days: PlanDay[]
   rationale: string[]
   readiness: Readiness
@@ -112,8 +117,13 @@ export interface LoadPoint {
 }
 
 export interface Settings {
+  /** the race you're training for */
+  goalRace: RaceKey
   goalRaceDate: string | null
-  goalHalfSeconds: number | null
+  /** target finish time for goalRace, seconds */
+  goalTimeSeconds: number | null
+  /** @deprecated older settings: a half-marathon goal; read as goalRace 'half' + goalTimeSeconds */
+  goalHalfSeconds?: number | null
   runDaysPerWeek: number
   longRunDay: number // 0 = Monday … 6 = Sunday
   restDays: number[]
@@ -189,4 +199,31 @@ export interface WorkoutDetail {
   route: [number, number][]
   /** time in each heart-rate zone using the zones set on the watch */
   hrZones: { zone: number; lowBpm: number; highBpm: number; seconds: number }[] | null
+}
+
+export interface Realism {
+  level: 'likely' | 'realistic' | 'ambitious' | 'unlikely'
+  /** one-line verdict */
+  headline: string
+  summary: string
+  weeks: number
+  currentVdot: number
+  neededVdot: number
+  /** typical fitness gain (VDOT) for this many weeks of structured training at your level */
+  typicalGain: number
+  /** finish time if the block goes to plan */
+  projectedSeconds: number
+  projectedRange: [number, number]
+  predictedNowSeconds: number
+  factors: string[]
+}
+
+/** Week-by-week plan from this week to race day. */
+export interface TrainingBlock {
+  race: RaceKey
+  raceDate: string | null
+  goalSeconds: number | null
+  weeks: WeekPlan[]
+  realism: Realism | null
+  notes: string[]
 }

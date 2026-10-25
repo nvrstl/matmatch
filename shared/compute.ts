@@ -1,12 +1,12 @@
 // Every view the UI shows, computed from a Dataset. Used by the local server and, in the hosted
 // version, directly in the browser.
 import { loadSeries, weeklyRunKm } from './analytics/load'
-import { planNextWeek } from './analytics/plan'
+import { planBlock, planNextWeek } from './analytics/plan'
 import { halfPredictionHistory, hrContext, isPaceRun, predictRaces } from './analytics/predict'
 import { readiness } from './analytics/readiness'
 import type { Dataset } from './dataset'
 import { weekStart } from './dates'
-import type { Activity, Overview, PredictionResult, Progress, SeriesPoint, Settings, Sport, WeekPlan } from './types'
+import type { Activity, Overview, PredictionResult, Progress, SeriesPoint, Settings, Sport, TrainingBlock, WeekPlan } from './types'
 
 export interface Computed {
   ds: Dataset
@@ -121,7 +121,7 @@ export function plan(c: Computed, settings: Settings, which: 'current' | 'next' 
     acts: c.ds.activities,
     settings,
     vdot: c.predictions.vdot,
-    predictedHalfSeconds: c.predictions.predictions.find((p) => p.race === 'half')?.seconds ?? null,
+    predictions: c.predictions.predictions,
     readiness: currentReadiness(c),
     today: c.today,
     which,
@@ -152,6 +152,20 @@ export function resolvePlan(
   if (saved && fresh.weekStart <= c.today) return saved
   if (dataComplete) store.set(fresh)
   return fresh
+}
+
+/** Week-by-week plan from this week to race day, with how realistic the target is. */
+export function block(c: Computed, settings: Settings, store: PlanStore, dataComplete = true): TrainingBlock {
+  return planBlock({
+    acts: c.ds.activities,
+    settings,
+    vdot: c.predictions.vdot,
+    predictions: c.predictions.predictions,
+    readiness: currentReadiness(c),
+    today: c.today,
+    current: resolvePlan(c, settings, 'current', store, dataComplete),
+    next: resolvePlan(c, settings, 'next', store, dataComplete),
+  })
 }
 
 /** The planned session for a date, if a plan for that week was ever made. */

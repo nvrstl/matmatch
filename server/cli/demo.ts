@@ -179,6 +179,6 @@ for (let week = start; week <= end; week = addDays(week, 7)) {
 db.exec('COMMIT')
 
 const predictedGoal = Math.round((timeFor(fitness(today).vdot + 1.2, 21097.5)) / 30) * 30
-saveSettings({ goalRaceDate: raceDate, goalHalfSeconds: predictedGoal, runDaysPerWeek: 5, longRunDay: 6, restDays: [0, 4] })
+saveSettings({ goalRace: 'half', goalRaceDate: raceDate, goalTimeSeconds: predictedGoal, runDaysPerWeek: 5, longRunDay: 6, restDays: [0, 4] })
 kvSet('last_sync', { finishedAt: new Date().toISOString(), error: null })
 console.log('Demo data written to', process.env.LIFELONG_DB, tableCounts())

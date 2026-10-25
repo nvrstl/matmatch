@@ -2,7 +2,7 @@
 // from Garmin through the password-protected /api/garmin function, and every view is computed
 // in the browser with the same code the local server uses.
 import { chunks } from '../../shared/chunks'
-import { activitiesPage, activityById, overview, plannedDay, prepare, progress, resolvePlan, type Computed, type PlanStore } from '../../shared/compute'
+import { activitiesPage, activityById, block, overview, plannedDay, prepare, progress, resolvePlan, type Computed, type PlanStore } from '../../shared/compute'
 import { cleanSettings, effectiveSettings, emptyDataset, mergeDataset, type Dataset, type ProfilePrefs } from '../../shared/dataset'
 import { addDays, localToday, weekStart } from '../../shared/dates'
 import type { Activity, Settings, SyncStatus, WeekPlan, WorkoutDetail } from '../../shared/types'
@@ -422,6 +422,8 @@ export async function cloudFetch<T>(path: string, init?: RequestInit): Promise<T
         plans,
         meta.lastSync !== null && !meta.pending, // never freeze a plan made from half-downloaded data
       ) as T
+    case '/block':
+      return block(current(), settings(), plans, meta.lastSync !== null && !meta.pending) as T
     case '/settings':
       return settings() as T
     case '/activities':

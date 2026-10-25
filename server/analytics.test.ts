@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS } from '../shared/dataset'
 import { chunks } from '../shared/chunks'
 import { parseToken } from './garmin/client'
 import { mapActivity } from './garmin/map'
-import { chooseDays, planNextWeek } from '../shared/analytics/plan'
+import { assessGoal, chooseDays, planBlock, planNextWeek } from '../shared/analytics/plan'
 import { effortsOf, endurancePenalty, predictRaces } from '../shared/analytics/predict'
 import { pacingPlan } from '../shared/pacing'
 import { paceAt, timeFor, vdotFor } from '../shared/vdot'
@@ -87,7 +87,7 @@ const good: Readiness = { status: 'good', signals: [] }
 const weeks = (km: number[]) =>
   km.flatMap((k, w) => [0, 2, 4].map((d) => run(addDays('2026-09-28', w * 7 + d), k / 3, (k / 3) * 330)))
 test('plan builds ~8% and lands on 7 days', () => {
-  const p = planNextWeek({ acts: weeks([40, 41, 40, 39]), settings: DEFAULT_SETTINGS, vdot: 48, predictedHalfSeconds: 5700, readiness: good, today: '2026-10-24' })
+  const p = planNextWeek({ acts: weeks([40, 41, 40, 39]), settings: DEFAULT_SETTINGS, vdot: 48, predictions: [{ race: 'half', label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high', basis: '', endurancePenalty: 0 }], readiness: good, today: '2026-10-24' })
   assert.equal(p.days.length, 7)
   assert.equal(p.weekStart, '2026-10-26')
   near(p.targetKm, 43, 4)
@@ -95,10 +95,10 @@ test('plan builds ~8% and lands on 7 days', () => {
 })
 
 test('plan takes a down week after three rising weeks and in race week', () => {
-  const p = planNextWeek({ acts: weeks([30, 34, 38, 42]), settings: DEFAULT_SETTINGS, vdot: 48, predictedHalfSeconds: 5700, readiness: good, today: '2026-10-24' })
+  const p = planNextWeek({ acts: weeks([30, 34, 38, 42]), settings: DEFAULT_SETTINGS, vdot: 48, predictions: [{ race: 'half', label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high', basis: '', endurancePenalty: 0 }], readiness: good, today: '2026-10-24' })
   assert.equal(p.phase, 'recovery')
-  const s: Settings = { ...DEFAULT_SETTINGS, goalRaceDate: '2026-11-01', goalHalfSeconds: 5600 }
-  const r = planNextWeek({ acts: weeks([40, 40, 40, 40]), settings: s, vdot: 48, predictedHalfSeconds: 5700, readiness: good, today: '2026-10-24' })
+  const s: Settings = { ...DEFAULT_SETTINGS, goalRace: 'half', goalRaceDate: '2026-11-01', goalTimeSeconds: 5600 }
+  const r = planNextWeek({ acts: weeks([40, 40, 40, 40]), settings: s, vdot: 48, predictions: [{ race: 'half', label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high', basis: '', endurancePenalty: 0 }], readiness: good, today: '2026-10-24' })
   assert.equal(r.phase, 'race')
   assert.equal(r.days[6].kind, 'race')
   assert.ok(r.days.filter((d) => d.kind !== 'race').reduce((a, d) => a + d.km, 0) < 25)
@@ -125,4 +125,37 @@ test('pacing: splits add up to the target and checkpoints line up', () => {
   assert.ok(neg.km[0].pace > even.km[0].pace && neg.km[20].pace < even.km[20].pace)
   near(neg.checkpoints.find((c) => c.label === '10K')!.cumulative, 2441, 1) // ~24 s behind even at 10K
   assert.equal(pacingPlan(42195, 3 * 3600, 'even').checkpoints.length, 10)
+})
+
+test('block: ends with taper and race week on the race date, realism grades the target', () => {
+  const acts = weeks([40, 41, 40, 39])
+  const pred = [{ race: 'half' as const, label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high' as const, basis: '', endurancePenalty: 0 }]
+  const mk = (goal: number | null, date = '2027-02-14') => {
+    const settings: Settings = { ...DEFAULT_SETTINGS, goalRace: 'half', goalRaceDate: date, goalTimeSeconds: goal }
+    const base = { acts, settings, vdot: 48, predictions: pred, readiness: good, today: '2026-10-24' }
+    return planBlock({ ...base, current: planNextWeek({ ...base, which: 'current' }), next: planNextWeek(base) })
+  }
+  const b = mk(5640)
+  assert.equal(b.weeks.at(-1)!.phase, 'race')
+  assert.equal(b.weeks.at(-1)!.days.find((d) => d.kind === 'race')!.date, '2027-02-14')
+  assert.equal(b.weeks.at(-2)!.phase, 'taper')
+  assert.ok(b.weeks.some((w) => w.phase === 'specific') && b.weeks.some((w) => w.phase === 'build'))
+  // race-pace sessions use the target pace
+  const rp = b.weeks.flatMap((w) => w.days).find((d) => d.kind === 'racePace')!
+  near(rp.targetPace!, 5640 / 21.0975, 0.5)
+  assert.ok(['likely', 'realistic'].includes(b.realism!.level)) // 1 min faster in 16 weeks
+  assert.equal(mk(4800).realism!.level, 'unlikely') // 1:20 from a 1:35 runner
+  assert.equal(mk(null).realism!.headline.startsWith('If training goes to plan'), true)
+})
+
+test('realism: needing more than is typical is ambitious, far more is unlikely', () => {
+  const prediction = { race: '10k' as const, label: '10K', meters: 10000, seconds: 2400, low: 0, high: 0, confidence: 'high' as const, basis: '', endurancePenalty: 0 }
+  const vdot = vdotFor(10000, 2400)
+  const wk = (n: number) => Array.from({ length: n }, (_, i) => ({ weekStart: addDays('2026-11-02', 7 * i), phase: 'build' as const, targetKm: 45, days: [{ kind: 'long', km: 14 }] }) as never)
+  const grade = (goal: number, n: number) => assessGoal({ race: '10k', raceDate: addDays('2026-10-25', 7 * n), today: '2026-10-25', vdot, prediction, goalSeconds: goal, weeks: wk(n) }).level
+  assert.equal(grade(2400, 10), 'likely')
+  assert.equal(grade(2360, 12), 'likely') // -0:40 in 12 weeks
+  assert.equal(grade(2330, 12), 'realistic') // -1:10
+  assert.equal(grade(2300, 12), 'ambitious') // -1:40
+  assert.equal(grade(2250, 12), 'unlikely') // -2:30 in 12 weeks
 })

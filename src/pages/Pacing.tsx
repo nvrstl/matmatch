@@ -33,13 +33,13 @@ export default function Pacing() {
 }
 
 function PacingCard({ pred, settings }: { pred: PredictionResult; settings: Settings }) {
-  const [race, setRace] = useState<RaceKey>(() => (remember.get('race') as RaceKey) || 'half')
+  const [race, setRace] = useState<RaceKey>(() => (remember.get('race') as RaceKey) || settings.goalRace)
   const meters = RACES.find((r) => r.key === race)!.meters
   const predicted = pred.predictions.find((p) => p.race === race)?.seconds ?? null
   const defaultTarget = (r: RaceKey) => {
     const saved = remember.get(`target:${r}`)
     if (saved) return saved
-    if (r === 'half' && settings.goalHalfSeconds) return fmtTime(settings.goalHalfSeconds)
+    if (r === settings.goalRace && settings.goalTimeSeconds) return fmtTime(settings.goalTimeSeconds)
     const p = pred.predictions.find((x) => x.race === r)?.seconds
     return p ? fmtTime(Math.round(p / 30) * 30) : r === 'half' ? '1:45:00' : ''
   }

@@ -46,8 +46,9 @@ export interface Dataset {
 export const emptyDataset = (): Dataset => ({ activities: [], daily: [], sleep: [], hrv: [], weight: [], profile: null })
 
 export const DEFAULT_SETTINGS: Settings = {
+  goalRace: 'half',
   goalRaceDate: null,
-  goalHalfSeconds: null,
+  goalTimeSeconds: null,
   runDaysPerWeek: 5,
   longRunDay: 6,
   restDays: [0, 4],
@@ -76,6 +77,12 @@ export function mergeDataset(base: Dataset, next: Partial<Dataset>): Dataset {
 /** Saved settings win; otherwise seed run days and long-run day from the Garmin profile. */
 export function effectiveSettings(saved: Partial<Settings> | null, profile: ProfilePrefs | null): Settings {
   const s: Settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) }
+  // Older saves only knew a half-marathon goal.
+  if (s.goalTimeSeconds == null && s.goalHalfSeconds) {
+    s.goalRace = 'half'
+    s.goalTimeSeconds = s.goalHalfSeconds
+  }
+  delete s.goalHalfSeconds
   if (saved) return s
   const idx = (d: string) => ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'].indexOf(d.toUpperCase())
   const avail = (profile?.availableTrainingDays ?? []).map(idx).filter((i) => i >= 0)
@@ -92,7 +99,12 @@ export function effectiveSettings(saved: Partial<Settings> | null, profile: Prof
 export function cleanSettings(b: Partial<Settings>): Partial<Settings> {
   const patch: Partial<Settings> = {}
   if ('goalRaceDate' in b) patch.goalRaceDate = b.goalRaceDate && /^\d{4}-\d{2}-\d{2}$/.test(b.goalRaceDate) ? b.goalRaceDate : null
-  if ('goalHalfSeconds' in b) patch.goalHalfSeconds = b.goalHalfSeconds && b.goalHalfSeconds > 3000 ? Math.round(b.goalHalfSeconds) : null
+  if (b.goalRace && ['5k', '10k', 'half', 'marathon'].includes(b.goalRace)) patch.goalRace = b.goalRace
+  if ('goalTimeSeconds' in b) patch.goalTimeSeconds = b.goalTimeSeconds && b.goalTimeSeconds > 600 ? Math.round(b.goalTimeSeconds) : null
+  if ('goalHalfSeconds' in b) {
+    patch.goalRace = 'half'
+    patch.goalTimeSeconds = b.goalHalfSeconds && b.goalHalfSeconds > 3000 ? Math.round(b.goalHalfSeconds) : null
+  }
   if (typeof b.runDaysPerWeek === 'number') patch.runDaysPerWeek = Math.max(3, Math.min(7, Math.round(b.runDaysPerWeek)))
   if (typeof b.longRunDay === 'number' && b.longRunDay >= 0 && b.longRunDay <= 6) patch.longRunDay = b.longRunDay
   if (Array.isArray(b.restDays)) patch.restDays = b.restDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)

@@ -4,7 +4,7 @@ A private dashboard for **your whole Garmin history**, focused on running a fast
 
 - **Lifelong progress**: predicted half-marathon time month by month since your first run, with your actual half-marathon efforts overlaid. Also yearly training hours by sport, monthly running volume, aerobic efficiency (easy-run pace), fitness (training load), VO₂max, resting HR, HRV, sleep, weight and steps.
 - **Race predictions** for 5K, 10K, half marathon and marathon, with a likely range, a confidence level and the effort each one is based on. It also lists your personal bests and works out what a goal half-marathon time would require.
-- **Next week's training plan**: a 7-day plan with paces, built around half-marathon performance. It adapts to your recent volume, recovery signals (resting HR, HRV, sleep, form) and your goal race date and time.
+- **A training plan to race day**: pick a 5K, 10K, half or marathon, the date and your target finish time or pace. You get every week until race day (base, build, race-specific, taper, race week), with race-pace sessions at your target pace and long runs that grow to suit the distance. It also tells you how realistic the target is: the improvement it needs against what's typical for your level in that time, and the finish time to expect if training goes to plan.
 
 Run it on your own computer, where your data goes from Garmin into a local SQLite file (`data/lifelong.db`) and the server only listens on `localhost`. Or host it on Vercel (see below).
 

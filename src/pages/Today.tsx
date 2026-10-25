@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { daysBetween, localToday } from '../../shared/dates'
-import type { Activity, Overview, PlanDay, Settings, WeekPlan } from '../../shared/types'
+import type { Activity, Overview, PlanDay, PredictionResult, RaceKey, Settings, WeekPlan } from '../../shared/types'
 import { InstallHint } from '../components/InstallHint'
 import { Card, Empty, Loading, StatusPill } from '../components/ui'
 import { useApi } from '../lib/api'
@@ -14,12 +14,14 @@ const KIND_COLOR: Record<PlanDay['kind'], string> = {
   long: 'var(--series-1)',
   threshold: 'var(--series-2)',
   halfPace: 'var(--series-2)',
+  racePace: 'var(--series-2)',
   intervals: 'var(--series-2)',
   race: 'var(--series-4)',
 }
 
 export default function Today() {
   const ov = useApi<Overview>('/overview')
+  const pred = useApi<PredictionResult>('/predictions')
   const plan = useApi<WeekPlan>('/plan?week=current')
   const settings = useApi<Settings>('/settings')
   const recent = useApi<{ total: number; items: Activity[] }>('/activities?sport=run&page=0')
@@ -80,7 +82,7 @@ export default function Today() {
         </section>
       )}
 
-      <RaceCountdown settings={settings.data} predicted={ov.data.half?.seconds ?? null} />
+      <RaceCountdown settings={settings.data} predicted={pred.data?.predictions.find((p) => p.race === settings.data!.goalRace)?.seconds ?? null} />
 
       {IS_CLOUD && <InstallHint />}
 
@@ -148,28 +150,32 @@ function Mini({ label, value }: { label: string; value: string }) {
   )
 }
 
+const RACE_NAME: Record<RaceKey, string> = { '5k': '5K', '10k': '10K', half: 'Half marathon', marathon: 'Marathon' }
+
 function RaceCountdown({ settings, predicted }: { settings: Settings; predicted: number | null }) {
   const today = localToday()
   if (!settings.goalRaceDate || settings.goalRaceDate < today) {
     return (
       <Link to="/plan" className="block rounded-2xl border border-dashed border-line p-4 text-[13px] text-ink-2">
-        <strong className="text-ink">Set your goal half marathon</strong> to get a countdown, goal-pace training and a
-        race-day pacing card. <span className="text-accent">Set goal →</span>
+        <strong className="text-ink">Pick your next race</strong> (5K, 10K, half or marathon), a date and your target. You get
+        a plan to race day and a realism check. <span className="text-accent">Set up →</span>
       </Link>
     )
   }
   const days = daysBetween(today, settings.goalRaceDate)
   return (
-    <Link to="/races/pacing" className="block rounded-2xl border border-line bg-surface p-4 sm:p-5">
+    <Link to="/plan" className="block rounded-2xl border border-line bg-surface p-4 sm:p-5">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[13px] text-ink-2">Half marathon · {fmtDate(settings.goalRaceDate, { day: 'numeric', month: 'long' })}</div>
-        <div className="text-[13px] font-medium text-accent">Pacing card →</div>
+        <div className="text-[13px] text-ink-2">
+          {RACE_NAME[settings.goalRace]} · {fmtDate(settings.goalRaceDate, { day: 'numeric', month: 'long' })}
+        </div>
+        <div className="text-[13px] font-medium text-accent">Your plan →</div>
       </div>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-5 gap-y-1">
         <span className="text-3xl font-semibold tracking-tight tabular">
           {days === 0 ? 'Race day' : days < 14 ? `${days} days` : `${Math.round(days / 7)} weeks`}
         </span>
-        {settings.goalHalfSeconds && <span className="text-sm text-ink-2">goal <strong className="text-ink">{fmtTime(settings.goalHalfSeconds)}</strong></span>}
+        {settings.goalTimeSeconds && <span className="text-sm text-ink-2">target <strong className="text-ink">{fmtTime(settings.goalTimeSeconds)}</strong></span>}
         {predicted && <span className="text-sm text-ink-2">now predicted <strong className="text-ink">{fmtTime(predicted)}</strong></span>}
       </div>
     </Link>

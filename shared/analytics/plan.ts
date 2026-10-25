@@ -109,14 +109,16 @@ interface WeekSpec {
   paces: Paces
   /** alternate long-run flavours from week to week */
   weekNo: number
+  /** shortest easy run worth doing, from your own history (km) */
+  minEasy: number
 }
 
-function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSpec): { days: PlanDay[]; notes: string[] } {
+function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy }: WeekSpec): { days: PlanDay[]; notes: string[] } {
   const race = settings.goalRace
   const prof = RACE_PROFILE[race]
   const notes: string[] = []
-  // Fewer, longer runs at low volume: aim for easy runs of at least ~6 km.
-  const runDays = clamp(Math.min(settings.runDaysPerWeek, Math.floor(target / 6)), 3, 7)
+  // Fewer, longer runs at low volume rather than many short ones.
+  const runDays = clamp(Math.min(settings.runDaysPerWeek, Math.floor(target / Math.max(6, minEasy * 0.9))), 3, 7)
   if (runDays < settings.runDaysPerWeek) {
     notes.push(`${runDays} runs instead of ${settings.runDaysPerWeek}: at ${target} km, fewer and longer runs build more endurance than many short ones.`)
   }
@@ -216,7 +218,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
   const set = (d: number | null, s: Session) => d !== null && sessions.set(d, s)
   switch (phase) {
     case 'base':
-      set(q1, strides(round1(clamp(target * 0.14, 5, 10))))
+      set(q1, strides(round1(clamp(target * 0.14, minEasy, Math.max(10, minEasy)))))
       set(q2, threshold(`Tempo: ${tReps} × ${tEach} min`))
       break
     case 'build':
@@ -245,10 +247,10 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
       break
     case 'taper':
       set(q1, { ...racePace(0.6), title: `Sharpener: ${racePace(0.6).title.split(': ')[1]} at race pace`, details: `Warm up 2 km. ${racePace(0.6).details.split('. ')[1]}. Cool down 2 km. Should feel controlled.` })
-      set(q2, strides(6))
+      set(q2, strides(minEasy))
       break
     case 'recovery':
-      set(q1, strides(round1(clamp(target * 0.15, 4, 8))))
+      set(q1, strides(round1(clamp(target * 0.15, minEasy, Math.max(8, minEasy)))))
       break
     case 'race': {
       const raceIdx = weekdayIndex(settings.goalRaceDate!)
@@ -266,7 +268,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
         sessions.set(sharpen, { ...racePace(0.4), title: 'Tune-up at race pace', km: wuCd + 3, details: `Warm up 2 km. 3 × 1 km at ${goalPace}, 2 min jog. Cool down. Just a reminder of the rhythm.` })
       }
       const shake = raceIdx - 1
-      if (shake >= 0) sessions.set(shake, strides(4))
+      if (shake >= 0) sessions.set(shake, { ...strides(round1(clamp(minEasy * 0.7, 5, 8))), title: `Shake-out ${round1(clamp(minEasy * 0.7, 5, 8))} km + strides`, details: `Very easy, then 4 short strides. Just loosening the legs for tomorrow.` })
       break
     }
   }
@@ -275,7 +277,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
   if (phase !== 'race' && q2 !== null && sessions.has(q2)) {
     const fixed = [...sessions.values()].reduce((a, x) => a + x.km, 0)
     if (fixed > target * Math.max(style.qualityRoom, race === 'marathon' ? 0.9 : 0)) {
-      sessions.set(q2, strides(round1(clamp(target * 0.12, 4, 8))))
+      sessions.set(q2, strides(round1(clamp(target * 0.12, minEasy, Math.max(8, minEasy)))))
       notes.push('One quality session this week: at this volume a second would crowd out the easy running.')
     }
   }
@@ -286,7 +288,13 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo }: WeekSp
   for (const d of sessions.keys()) runSet.add(d)
   const easyDays = [...runSet].filter((d) => !sessions.has(d))
   const fixedKm = [...sessions.values()].reduce((a, s) => a + s.km, 0)
-  const per = easyDays.length ? clamp(round1((target - fixedKm) / easyDays.length), 4, 16) : 0
+  // Never shorter than your usual easy run (shorter only in the taper and race week): if there's
+  // too little left, run fewer easy days. The day after the long run goes last.
+  const floor = phase === 'race' ? round1(clamp(minEasy * 0.6, 5, 8)) : phase === 'taper' ? round1(minEasy * 0.8) : minEasy
+  const order = [...easyDays].sort((a, b) => Number(a === (long + 1) % 7) - Number(b === (long + 1) % 7))
+  while (order.length > 1 && (target - fixedKm) / order.length < floor) order.shift()
+  easyDays.splice(0, easyDays.length, ...order)
+  const per = easyDays.length ? clamp(round1((target - fixedKm) / easyDays.length), floor, 18) : 0
   for (const d of easyDays) {
     sessions.set(d, {
       kind: 'easy',
@@ -385,7 +393,7 @@ export function planNextWeek({ acts, settings, vdot, predictions, readiness, tod
   target = Math.max(10, Math.round(target))
 
   const weekNo = Math.floor(daysBetween('2024-01-01', planStart) / 7)
-  const { days, notes } = buildDays({ planStart, phase, target, settings, paces, weekNo })
+  const { days, notes } = buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy: easyFloor(acts, today) })
   rationale.push(...notes)
   rationale.push(...goalNotes(race, goal, predicted, vdot))
   if (settings.goalRaceDate && phase !== 'race' && phase !== 'recovery') {
@@ -427,6 +435,21 @@ function goalNotes(race: RaceKey, goal: number | null, predicted: number | null,
 // ---------------------------------------------------------------------------
 // The whole block to race day
 
+/**
+ * Shortest easy run worth planning for you: about 80 % of your typical run (median of your runs of
+ * 3–25 km over the last year), between 5 and 12 km. Short 4 km jogs are rarely useful if you
+ * normally run 10 km.
+ */
+export function easyFloor(acts: Activity[], today: string): number {
+  const from = addDays(today, -365)
+  const ks = acts
+    .filter((a) => a.sport === 'run' && a.date >= from && a.date <= today && a.distanceM >= 3000 && a.distanceM <= 25000)
+    .map((a) => a.distanceM / 1000)
+    .sort((a, b) => a - b)
+  if (ks.length < 10) return 5
+  return round1(clamp(ks[Math.floor(ks.length / 2)] * 0.8, 5, 12))
+}
+
 /** Your usual running volume: median km of the weeks you ran in the last year (robust to ultras). */
 export function habitualKm(acts: Activity[], today: string): number {
   const weeks = weeklyRunKm(acts, addDays(weekStart(today), -1), 52).map((w) => w.km).filter((km) => km >= 5)
@@ -461,6 +484,7 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
   // Aim for a peak that suits the distance, and at least your usual volume: rebuilding to what
   // your body already knows can go faster than building beyond it.
   const usual = habitualKm(inputs.acts, today)
+  const minEasy = easyFloor(inputs.acts, today)
   const distanceShare: Record<RaceKey, number> = { '5k': 0.85, '10k': 0.95, half: 1.05, marathon: 1.15 }
   const style = STYLE[settings.planStyle ?? 'balanced']
   const peak = settings.weeklyKmTarget ?? Math.round(Math.max(prof.peakFloor, startKm * prof.peakGrowth, usual * distanceShare[race]) * style.peakMul)
@@ -482,7 +506,7 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
     }
     km = Math.max(10, Math.round(km))
     const weekNo = Math.floor(daysBetween('2024-01-01', w) / 7)
-    const { days } = buildDays({ planStart: w, phase, target: km, settings, paces, weekNo })
+    const { days } = buildDays({ planStart: w, phase, target: km, settings, paces, weekNo, minEasy })
     weeks.push({
       weekStart: w,
       phase,

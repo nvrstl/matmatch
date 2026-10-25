@@ -1,20 +1,27 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { autoSync, connect, getKey, IS_CLOUD } from '../lib/cloud'
+import { autoSync, connect, getKey, IS_CLOUD, keepStorage, restoreSession } from '../lib/cloud'
 import { buttonCls, inputCls } from './ui'
 
 /** Hosted mode: each person connects their own Garmin key once per device, then it syncs itself. */
 export function CloudGate({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(() => !IS_CLOUD || Boolean(getKey()))
+  // Not connected on this device yet: first try the key the server remembered (cookie).
+  const [restoring, setRestoring] = useState(() => IS_CLOUD && !getKey())
   useEffect(() => {
     if (!IS_CLOUD) return
     const onAuth = () => setConnected(Boolean(getKey()))
     window.addEventListener('lifelong:auth', onAuth)
+    if (!getKey()) void restoreSession().finally(() => setRestoring(false))
     return () => window.removeEventListener('lifelong:auth', onAuth)
   }, [])
   useEffect(() => {
-    if (connected && IS_CLOUD) void autoSync()
+    if (connected && IS_CLOUD) {
+      keepStorage()
+      void autoSync()
+    }
   }, [connected])
-  return connected ? <>{children}</> : <Connect />
+  if (connected) return <>{children}</>
+  return restoring ? <p className="gutter py-10 text-center text-sm text-muted">Reconnecting to Garmin…</p> : <Connect />
 }
 
 function Connect() {

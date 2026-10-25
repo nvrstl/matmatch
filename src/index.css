@@ -106,3 +106,13 @@ body {
     padding-right: max(2rem, env(safe-area-inset-right, 0px));
   }
 }
+
+/* Clear the status bar / notch when running full-screen from the home screen */
+.safe-top {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 1.25rem);
+}
+@media (min-width: 768px) {
+  .safe-top {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
+  }
+}

@@ -3,7 +3,8 @@
 // only relays requests to Garmin (the browser can't call Garmin directly) and stores nothing.
 // It never uses a server-side key, so nobody can read anyone else's data through it.
 //
-//   GET /api/garmin?part=token        header x-garmin-key   → { token, expiresAt }
+//   GET /api/garmin?part=token        header x-garmin-key (or the remembered-key cookie) → { token, expiresAt }
+//   GET /api/garmin?part=forget       → clears the remembered-key cookie
 //   GET /api/garmin?part=profile      header x-garmin-token
 //   GET /api/garmin?part=activities&today=YYYY-MM-DD[&since=YYYY-MM-DD]
 //   GET /api/garmin?part=wellness&from=YYYY-MM-DD&to=YYYY-MM-DD   (at most 366 days)
@@ -21,11 +22,32 @@ import { fetchActivities, fetchDaily, fetchHrv, fetchProfile, fetchSleep, fetchW
 export const maxDuration = 60
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
-const json = (body: unknown, status = 200) =>
+const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...extra },
   })
+
+// The key is also kept in a cookie so a phone that clears website storage (Safari does after 7 days
+// without a visit) reconnects without asking for it again. HttpOnly: page scripts can't read it;
+// SameSite=Strict + Path=/api: only sent to this function from this site. The server keeps nothing.
+const COOKIE = 'lifelong_key'
+const keyCookie = (key: string) =>
+  `${COOKIE}=${encodeURIComponent(key)}; Path=/api; Max-Age=${400 * 24 * 3600}; HttpOnly; Secure; SameSite=Strict`
+const clearCookie = `${COOKIE}=; Path=/api; Max-Age=0; HttpOnly; Secure; SameSite=Strict`
+function cookieKey(request: Request): string | null {
+  for (const part of (request.headers.get('cookie') ?? '').split(';')) {
+    const [name, ...rest] = part.trim().split('=')
+    if (name === COOKIE) {
+      try {
+        return decodeURIComponent(rest.join('='))
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
 
 /** Run async jobs with limited concurrency, keeping order. */
 async function pool<T>(jobs: (() => Promise<T>)[], size: number): Promise<T[]> {
@@ -50,14 +72,25 @@ export async function GET(request: Request): Promise<Response> {
   const part = url.searchParams.get('part')
 
   try {
+    if (part === 'forget') return json({ ok: true }, 200, { 'Set-Cookie': clearCookie })
+
     if (part === 'token') {
-      const key = request.headers.get('x-garmin-key')
-      if (!plausible(key)) return json({ error: 'Paste your Garmin Personal API key.', reason: 'key' }, 400)
+      // A key in the header (connecting) wins; otherwise the remembered one (reconnecting).
+      const fromHeader = request.headers.get('x-garmin-key')
+      const key = fromHeader ?? cookieKey(request)
+      if (!plausible(key)) {
+        return json({ error: fromHeader ? 'Paste your Garmin Personal API key.' : 'No remembered key.', reason: 'key' }, fromHeader ? 400 : 401)
+      }
       try {
-        return json(await new GarminClient(key, 0).exchangeKey())
+        // (Re)setting the cookie on every exchange keeps it alive while the app is used.
+        return json(await new GarminClient(key, 0).exchangeKey(), 200, { 'Set-Cookie': keyCookie(key) })
       } catch (e) {
         if (e instanceof GarminApiError && (e.status === 401 || e.status === 403)) {
-          return json({ error: 'Garmin rejected this key. Check it, or create a new one in Garmin Connect.', reason: 'key' }, 401)
+          return json(
+            { error: 'Garmin rejected this key. Check it, or create a new one in Garmin Connect.', reason: 'key' },
+            401,
+            fromHeader ? {} : { 'Set-Cookie': clearCookie },
+          )
         }
         throw e
       }

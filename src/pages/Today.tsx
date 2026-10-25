@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { daysBetween, localToday } from '../../shared/dates'
 import type { Activity, Overview, PlanDay, Settings, WeekPlan } from '../../shared/types'
+import { InstallHint } from '../components/InstallHint'
 import { Card, Empty, Loading, StatusPill } from '../components/ui'
 import { useApi } from '../lib/api'
 import { IS_CLOUD } from '../lib/cloud'
@@ -80,6 +81,8 @@ export default function Today() {
       )}
 
       <RaceCountdown settings={settings.data} predicted={ov.data.half?.seconds ?? null} />
+
+      {IS_CLOUD && <InstallHint />}
 
       <Card title="This week" action={<Link to="/plan" className="text-[13px] font-medium text-accent">Plan →</Link>}>
         <div className="flex items-baseline justify-between text-sm">

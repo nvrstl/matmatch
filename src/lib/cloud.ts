@@ -120,7 +120,15 @@ function current(): Computed {
 const KEY = 'lifelong:garmin-key'
 const TOKEN = 'lifelong:garmin-token'
 
-export const getKey = () => ls.get(KEY)
+const CONNECTED = 'lifelong:connected'
+
+/** Connected on this device: the key is in local storage, or a remembered-key cookie worked. */
+export const getKey = () => ls.get(KEY) ?? (ls.get(CONNECTED) ? 'remembered' : null)
+
+/** Ask the browser not to clear this site's data under storage pressure (best effort). */
+export function keepStorage() {
+  void navigator.storage?.persist?.().catch(() => false)
+}
 
 const connected = () => window.dispatchEvent(new Event('lifelong:auth'))
 
@@ -168,9 +176,9 @@ async function call(params: Record<string, string>, headers: Record<string, stri
   }
 }
 
-/** Exchange the key for a 24h token and keep it; Garmin rate-limits token requests. */
+/** Exchange the key (or, with 'remembered', the key cookie) for a token. */
 async function newToken(key: string): Promise<string> {
-  const { res, body } = await call({ part: 'token' }, { 'x-garmin-key': key })
+  const { res, body } = await call({ part: 'token' }, key === 'remembered' ? {} : { 'x-garmin-key': key })
   if (!res.ok) throw new Error(body.error ?? `Couldn't reach Garmin (${res.status}).`)
   const { token, expiresAt } = body as unknown as { token: string; expiresAt: number }
   ls.set(TOKEN, JSON.stringify({ token, expiresAt }))
@@ -210,12 +218,35 @@ export async function connect(key: string): Promise<void> {
   if (ls.get('lifelong:key-fp') !== fingerprint) await forgetDeviceData()
   ls.set('lifelong:key-fp', fingerprint)
   ls.set(KEY, k)
+  ls.set(CONNECTED, '1')
+  keepStorage()
   connected()
 }
 
 /** Remove the key, token and all data from this device. */
+/**
+ * After the browser cleared local storage (Safari does after 7 days without a visit), reconnect
+ * with the key the server remembered in a cookie. Resolves true when that worked.
+ */
+export async function restoreSession(): Promise<boolean> {
+  if (getKey()) return true
+  try {
+    const res = await fetch('/api/garmin?part=token')
+    if (!res.ok) return false
+    const { token, expiresAt } = (await res.json()) as { token: string; expiresAt: number }
+    ls.set(TOKEN, JSON.stringify({ token, expiresAt }))
+    ls.set(CONNECTED, '1')
+    keepStorage()
+    connected()
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function disconnect() {
-  for (const k of [KEY, TOKEN, 'lifelong:key-fp', 'lifelong:settings']) ls.set(k, null)
+  await fetch('/api/garmin?part=forget').catch(() => {}) // forget the remembered key too
+  for (const k of [KEY, TOKEN, CONNECTED, 'lifelong:key-fp', 'lifelong:settings']) ls.set(k, null)
   await forgetDeviceData()
   connected()
 }

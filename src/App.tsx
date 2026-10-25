@@ -65,7 +65,7 @@ export default function App() {
         </nav>
       </aside>
 
-      <main className="gutter mx-auto w-full max-w-6xl pt-5 pb-28 md:py-8">
+      <main className="gutter safe-top mx-auto w-full max-w-6xl pb-28 md:pb-8">
         {snapshotLabel() && (
           <div className="mb-5 rounded-xl border border-line bg-[var(--wash)] px-4 py-3 text-[13px] text-ink-2">{snapshotLabel()}</div>
         )}

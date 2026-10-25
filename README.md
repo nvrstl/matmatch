@@ -40,6 +40,8 @@ The only server code is `api/garmin.ts`, a relay. Browsers can't call Garmin dir
 
 Garmin allows about 100 requests a minute per person. A first sync of several years needs about 15 requests per year of history plus one per 100 activities, so it usually finishes in seconds. If Garmin asks for a pause, the app waits and continues.
 
+**Staying connected.** The key is kept on the device and also in a 400-day cookie that only `/api` receives (HttpOnly, Secure, SameSite=Strict). If the browser clears the site's storage, which iPhone Safari does after 7 days without a visit, the app reconnects from the cookie and re-downloads by itself. The app also asks for persistent storage and can be installed to the home screen; installed web apps on iPhone aren't subject to the 7-day clean-up. Re-opening only fetches what's new, and only when the data is more than 3 hours old. "Disconnect" on the Sync page removes the key, the cookie and all data.
+
 No environment variables are needed. `vercel.json` builds with `npm run build:vercel` (cloud mode).
 
 ## How the numbers are made

@@ -41,7 +41,7 @@ const RACE_PROFILE: Record<RaceKey, { longCap: number; peakFloor: number; peakGr
 
 /** How hard a plan pushes. Balanced is the default; aggressive suits experienced runners returning to known volume. */
 export const STYLE = {
-  conservative: { firstStep: 1.05, grow: 1.05, rebuild: 1.08, downEvery: 3, downTo: 0.75, peakMul: 0.95, skipRisingDown: false, qualityRoom: 0.75, longBonus: 0, raceWork: 0.85, gainMul: 0.85 },
+  conservative: { firstStep: 1.05, grow: 1.05, rebuild: 1.08, downEvery: 3, downTo: 0.75, peakMul: 0.85, skipRisingDown: false, qualityRoom: 0.75, longBonus: 0, raceWork: 0.85, gainMul: 0.85 },
   balanced: { firstStep: 1.08, grow: 1.07, rebuild: 1.12, downEvery: 4, downTo: 0.8, peakMul: 1, skipRisingDown: false, qualityRoom: 0.8, longBonus: 0, raceWork: 1, gainMul: 1 },
   aggressive: { firstStep: 1.12, grow: 1.1, rebuild: 1.18, downEvery: 4, downTo: 0.85, peakMul: 1.15, skipRisingDown: true, qualityRoom: 0.92, longBonus: 0.03, raceWork: 1.25, gainMul: 1.12 },
 } as const
@@ -99,6 +99,51 @@ export function chooseDays(s: Settings, runDays: number) {
 }
 
 // ---------------------------------------------------------------------------
+// Session progressions: each time a session type comes round in a normal week it moves up one
+// rung; easier weeks repeat a lighter rung and the taper steps back.
+
+/** Threshold / tempo: [reps, minutes] — 20 min of threshold work growing to 40–45 min. */
+const T_LADDER: [number, number][] = [[2, 10], [3, 8], [2, 12], [3, 9], [3, 10], [2, 15], [4, 8], [3, 12], [2, 18], [4, 10], [3, 15], [2, 20]]
+const T_CAP: Record<RaceKey, number> = { '5k': 30, '10k': 36, half: 45, marathon: 45 } // max threshold minutes
+
+/** Track sessions, rotating for variety while total volume grows: [reps, metres] or a pyramid. */
+const I_MENU: { reps: number; m: number; pyramid?: number[] }[] = [
+  { reps: 12, m: 400 },
+  { reps: 6, m: 800 },
+  { reps: 5, m: 1000 },
+  { reps: 8, m: 800 },
+  { reps: 4, m: 1200 },
+  { reps: 1, m: 5600, pyramid: [400, 800, 1200, 1600, 1200, 800, 400] },
+  { reps: 6, m: 1000 },
+  { reps: 3, m: 1600 },
+  { reps: 5, m: 1200 },
+]
+
+/** Race-pace work per distance: [reps, km]. */
+const RP_LADDER: Record<RaceKey, [number, number][]> = {
+  '5k': [[5, 0.8], [6, 0.8], [5, 1], [6, 1], [4, 1.2], [5, 1.2], [3, 1.6]],
+  '10k': [[5, 1], [4, 1.5], [5, 1.5], [4, 2], [5, 2], [3, 3], [4, 2.5]],
+  half: [[2, 3], [3, 3], [2, 5], [3, 4], [2, 6], [3, 5], [2, 7], [3, 6]],
+  marathon: [[2, 4], [2, 5], [2, 6], [3, 5], [2, 8], [2, 10], [1, 16], [2, 12]],
+}
+
+export interface Rungs {
+  threshold: number
+  intervals: number
+  racePace: number
+}
+
+/** Where the ladders start: more experienced runners (higher usual volume) skip the first rungs. */
+export function startRungs(settings: Settings, usualKm: number): Rungs {
+  let base = usualKm < 30 ? 0 : usualKm < 45 ? 1 : usualKm < 60 ? 2 : 3
+  if (settings.planStyle === 'aggressive') base += 1
+  if (settings.planStyle === 'conservative') base = Math.max(0, base - 1)
+  return { threshold: base, intervals: Math.max(0, base - 1), racePace: Math.max(0, base - 1) }
+}
+
+const at = <T>(list: T[], i: number) => list[clamp(Math.round(i), 0, list.length - 1)]
+
+// ---------------------------------------------------------------------------
 // One week's sessions
 
 interface WeekSpec {
@@ -111,14 +156,21 @@ interface WeekSpec {
   weekNo: number
   /** shortest easy run worth doing, from your own history (km) */
   minEasy: number
+  /** progression rung for each session type this week */
+  rungs: Rungs
+  /** an easier week inside the block: sessions repeat a lighter rung */
+  easyWeek?: boolean
 }
 
-function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy }: WeekSpec): { days: PlanDay[]; notes: string[] } {
+function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy, rungs, easyWeek }: WeekSpec): { days: PlanDay[]; notes: string[]; used: Set<keyof Rungs> } {
+  const used = new Set<keyof Rungs>()
+  // easier weeks and the taper step back down the ladders
+  const step = phase === 'taper' ? -2 : easyWeek || phase === 'recovery' ? -1 : 0
   const race = settings.goalRace
   const prof = RACE_PROFILE[race]
   const notes: string[] = []
   // Fewer, longer runs at low volume rather than many short ones.
-  const runDays = clamp(Math.min(settings.runDaysPerWeek, Math.floor(target / Math.max(6, minEasy * 0.9))), 3, 7)
+  const runDays = clamp(Math.min(settings.runDaysPerWeek, Math.floor(target / Math.max(6, minEasy * 1.1))), 3, 7)
   if (runDays < settings.runDaysPerWeek) {
     notes.push(`${runDays} runs instead of ${settings.runDaysPerWeek}: at ${target} km, fewer and longer runs build more endurance than many short ones.`)
   }
@@ -156,54 +208,50 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
         details: `Relaxed and conversational, ${easyRange}. The last 15 min may drift toward ${fmtPace(paces.marathon)} if you feel good.`,
       }
 
-  // ---- Quality sessions ------------------------------------------------------------
-  const tKm = clamp(target * 0.1, 4, 10)
-  const tMin = Math.round((tKm * paces.threshold) / 60 / 5) * 5 || 15
-  const tReps = tMin >= 30 ? 3 : 2
-  const tEach = Math.max(6, Math.round(tMin / tReps / 2) * 2) // even minutes reads cleaner
-  const threshold = (title = `Threshold: ${tReps} × ${tEach} min`): Session => ({
-    kind: 'threshold',
-    title,
-    km: round1(wuCd + tKm + 0.4 * (tReps - 1)),
-    targetPace: paces.threshold,
-    details: `Warm up 2 km easy. ${tReps} × ${tEach} min at ${fmtPace(paces.threshold)} with 2 min easy jog between. Cool down 2 km. Comfortably hard: you could say a few words, not chat.`,
-  })
+  // ---- Quality sessions (progressive, see the ladders above) -------------------------
+  const threshold = (label = 'Threshold'): Session => {
+    used.add('threshold')
+    // highest rung within the distance's cap
+    const fits = T_LADDER.filter(([r, m]) => r * m <= T_CAP[race])
+    const [reps, min] = at(fits, rungs.threshold + step)
+    const workKm = (reps * min * 60) / paces.threshold
+    return {
+      kind: 'threshold',
+      title: `${label}: ${reps} × ${min} min`,
+      km: round1(wuCd + workKm + 0.4 * (reps - 1)),
+      targetPace: paces.threshold,
+      details: `Warm up 2 km easy. ${reps} × ${min} min at ${fmtPace(paces.threshold)} with 2 min easy jog between. Cool down 2 km. Comfortably hard: you could say a few words, not chat.`,
+    }
+  }
   const intervals = (): Session => {
-    const reps = clamp(Math.round(target * 0.06), 4, 6)
+    used.add('intervals')
+    const s = at(I_MENU, rungs.intervals + step)
+    const short = s.m <= 600
+    const pace = short ? paces.interval * 0.97 : paces.interval
+    const workKm = (s.reps * s.m) / 1000
+    const what = s.pyramid ? `Pyramid ${s.pyramid.join('-')} m` : `${s.reps} × ${s.m} m`
+    const rest = s.pyramid ? 'jog half the distance of each rep' : short ? '200 m jog' : s.m >= 1200 ? '3 min jog' : '2 min jog'
     return {
       kind: 'intervals',
-      title: `VO₂max intervals: ${reps} × 1000 m`,
-      km: round1(wuCd + reps + reps * 0.4),
-      targetPace: paces.interval,
-      details: `Warm up 2 km + 4 strides. ${reps} × 1000 m at ${fmtPace(paces.interval)}, 2–3 min jog between. Cool down 2 km.`,
+      title: `Intervals: ${what}`,
+      km: round1(wuCd + workKm * 1.5),
+      targetPace: pace,
+      details: `Warm up 2 km + 4 strides. ${what} at ${fmtPace(pace)}${short ? ' (a touch faster than 5K pace)' : ' (about 3–5K race pace)'}, ${rest} between. Cool down 2 km.`,
     }
   }
-  const reps400 = (): Session => {
-    const n = clamp(Math.round(target / 4), 6, 12)
-    return {
-      kind: 'intervals',
-      title: `Speed: ${n} × 400 m`,
-      km: round1(wuCd + n * 0.4 + n * 0.2),
-      targetPace: paces.repetition,
-      details: `Warm up 2 km + strides. ${n} × 400 m at ${fmtPace(paces.repetition)} with 400 m easy jog. Smooth and fast, not a sprint.`,
-    }
-  }
-  /** The goal-pace session: rep length and volume depend on the race. */
-  const racePace = (scale = 1): Session => {
-    const spec: Record<RaceKey, { reps: number; each: number; rest: string }> = {
-      '5k': { reps: 5, each: 1, rest: '2–3 min jog' },
-      '10k': { reps: target >= 40 ? 5 : 4, each: 2, rest: '90 s jog' },
-      half: { reps: target >= 45 ? 3 : 2, each: round1(clamp(target * 0.15, 6, 12) / (target >= 45 ? 3 : 2)), rest: '3 min easy' },
-      marathon: { reps: 2, each: round1(clamp(target * 0.2, 8, 16) / 2), rest: '3 min easy' },
-    }
-    const s = spec[race]
-    const reps = Math.max(1, Math.round(s.reps * scale * style.raceWork))
+  /** The goal-pace session: rep length and volume grow through the block. */
+  const racePace = (extraStep = 0): Session => {
+    used.add('racePace')
+    const [reps0, each] = at(RP_LADDER[race], rungs.racePace + step + extraStep)
+    const reps = Math.max(1, Math.round(reps0 * (style.raceWork > 1 && reps0 > 1 ? 1.25 : style.raceWork < 1 && reps0 > 2 ? 0.8 : 1)))
+    const rest = race === '5k' ? '2–3 min jog' : race === '10k' ? '90 s jog' : '3 min easy'
+    const name = race === '5k' || race === '10k' ? raceName.toUpperCase() : raceName[0].toUpperCase() + raceName.slice(1)
     return {
       kind: 'racePace',
-      title: `${race === '5k' || race === '10k' ? raceName.toUpperCase() : raceName[0].toUpperCase() + raceName.slice(1)} pace: ${reps} × ${s.each} km`,
-      km: round1(wuCd + reps * s.each + 0.6 * (reps - 1)),
+      title: reps === 1 ? `${name} pace: ${each} km continuous` : `${name} pace: ${reps} × ${each} km`,
+      km: round1(wuCd + reps * each + 0.6 * (reps - 1)),
       targetPace: paces.race,
-      details: `Warm up 2 km. ${reps} × ${s.each} km at ${goalPace} (your target pace), ${s.rest} between. Cool down 2 km. Lock in the rhythm you'll race at.`,
+      details: `Warm up 2 km. ${reps === 1 ? `${each} km` : `${reps} × ${each} km`} at ${goalPace} (your target pace)${reps > 1 ? `, ${rest} between` : ''}. Cool down 2 km. Lock in the rhythm you'll race at.`,
     }
   }
   const strides = (km: number): Session => ({
@@ -219,7 +267,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
   switch (phase) {
     case 'base':
       set(q1, strides(round1(clamp(target * 0.14, minEasy, Math.max(10, minEasy)))))
-      set(q2, threshold(`Tempo: ${tReps} × ${tEach} min`))
+      set(q2, threshold('Tempo'))
       break
     case 'build':
       if (race === '5k') {
@@ -227,7 +275,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
         set(q2, threshold())
       } else if (race === 'marathon') {
         set(q1, threshold())
-        set(q2, racePace(0.5))
+        set(q2, racePace(-2))
       } else {
         set(q1, threshold())
         set(q2, intervals())
@@ -236,7 +284,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
     case 'specific':
       if (race === '5k') {
         set(q1, racePace())
-        set(q2, weekNo % 2 ? reps400() : threshold())
+        set(q2, weekNo % 2 ? intervals() : threshold())
       } else if (race === '10k') {
         set(q1, racePace())
         set(q2, weekNo % 2 ? intervals() : threshold())
@@ -246,7 +294,10 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
       }
       break
     case 'taper':
-      set(q1, { ...racePace(0.6), title: `Sharpener: ${racePace(0.6).title.split(': ')[1]} at race pace`, details: `Warm up 2 km. ${racePace(0.6).details.split('. ')[1]}. Cool down 2 km. Should feel controlled.` })
+      {
+        const rp = racePace()
+        set(q1, { ...rp, title: `Sharpener: ${rp.title.split(': ')[1]} at race pace`, details: `${rp.details.replace(' Lock in the rhythm you\'ll race at.', '')} Should feel controlled.` })
+      }
       set(q2, strides(minEasy))
       break
     case 'recovery':
@@ -265,7 +316,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
       })
       const sharpen = raceIdx - 3
       if (sharpen >= 0) {
-        sessions.set(sharpen, { ...racePace(0.4), title: 'Tune-up at race pace', km: wuCd + 3, details: `Warm up 2 km. 3 × 1 km at ${goalPace}, 2 min jog. Cool down. Just a reminder of the rhythm.` })
+        sessions.set(sharpen, { ...racePace(-3), title: 'Tune-up at race pace', km: wuCd + 3, details: `Warm up 2 km. 3 × 1 km at ${goalPace}, 2 min jog. Cool down. Just a reminder of the rhythm.` })
       }
       const shake = raceIdx - 1
       if (shake >= 0) sessions.set(shake, { ...strides(round1(clamp(minEasy * 0.7, 5, 8))), title: `Shake-out ${round1(clamp(minEasy * 0.7, 5, 8))} km + strides`, details: `Very easy, then 4 short strides. Just loosening the legs for tomorrow.` })
@@ -277,8 +328,13 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
   if (phase !== 'race' && q2 !== null && sessions.has(q2)) {
     const fixed = [...sessions.values()].reduce((a, x) => a + x.km, 0)
     if (fixed > target * Math.max(style.qualityRoom, race === 'marathon' ? 0.9 : 0)) {
+      // Room for one hard session: alternate the two types week to week so both keep progressing.
+      const first = q1 !== null ? sessions.get(q1) : undefined
+      const second = sessions.get(q2)!
+      const isQuality = (x: Session | undefined) => !!x && x.kind !== 'strides' && x.kind !== 'easy'
+      if (isQuality(second) && q1 !== null && (weekNo % 2 === 1 || !isQuality(first))) sessions.set(q1, second)
       sessions.set(q2, strides(round1(clamp(target * 0.12, minEasy, Math.max(8, minEasy)))))
-      notes.push('One quality session this week: at this volume a second would crowd out the easy running.')
+      notes.push('One quality session this week, alternating type week to week: at this volume a second would crowd out the easy running.')
     }
   }
 
@@ -309,7 +365,7 @@ function buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy 
     const s = sessions.get(i) ?? { kind: 'rest' as const, title: 'Rest', km: 0, details: 'Rest or light mobility. Recovery is when the adaptation happens.' }
     return { date, weekday: WEEKDAYS[i], ...s }
   })
-  return { days, notes }
+  return { days, notes, used }
 }
 
 // ---------------------------------------------------------------------------
@@ -393,7 +449,11 @@ export function planNextWeek({ acts, settings, vdot, predictions, readiness, tod
   target = Math.max(10, Math.round(target))
 
   const weekNo = Math.floor(daysBetween('2024-01-01', planStart) / 7)
-  const { days, notes } = buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy: easyFloor(acts, today) })
+  // Ladders start where your experience puts you; next week is one step on.
+  const start = startRungs(settings, usual)
+  const offset = daysBetween(thisWeek, planStart) / 7
+  const rungs = { threshold: start.threshold + offset, intervals: start.intervals + offset, racePace: start.racePace + offset }
+  const { days, notes } = buildDays({ planStart, phase, target, settings, paces, weekNo, minEasy: easyFloor(acts, today), rungs })
   rationale.push(...notes)
   rationale.push(...goalNotes(race, goal, predicted, vdot))
   if (settings.goalRaceDate && phase !== 'race' && phase !== 'recovery') {
@@ -491,11 +551,20 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
   if (usual > startKm * 1.25) notes.push(`You usually run about ${Math.round(usual)} km a week, so the plan rebuilds toward that faster than it would build new volume.`)
   let build = weeks[weeks.length - 1].targetKm
   let peakReached = startKm
+  // Continue the session progressions after the weeks already planned.
+  const rungs = startRungs(settings, usual)
+  const bump = (w: WeekPlan) => {
+    if (w.days.some((d) => d.kind === 'threshold')) rungs.threshold++
+    if (w.days.some((d) => d.kind === 'intervals')) rungs.intervals++
+    if (w.days.some((d) => d.kind === 'racePace' || d.kind === 'halfPace')) rungs.racePace++
+  }
+  for (const w of weeks) if (w.phase !== 'recovery') bump(w)
   const MAX_WEEKS = 40
   for (let w = addDays(weeks[weeks.length - 1].weekStart, 7), i = weeks.length; w <= lastWeek && i < MAX_WEEKS; w = addDays(w, 7), i++) {
     const phase = phaseFor(w, settings)
     const weeksOut = Math.floor(daysBetween(w, raceDate) / 7)
     let km: number
+    const easyWeek = phase !== 'race' && phase !== 'taper' && i % style.downEvery === style.downEvery - 1
     if (phase === 'race') km = peakReached * (race === 'marathon' ? 0.45 : 0.55)
     else if (phase === 'taper') km = peakReached * (race === 'marathon' ? (weeksOut === 2 ? 0.8 : 0.65) : 0.75)
     else if (i % style.downEvery === style.downEvery - 1) km = build * style.downTo // regular easier week
@@ -506,7 +575,7 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
     }
     km = Math.max(10, Math.round(km))
     const weekNo = Math.floor(daysBetween('2024-01-01', w) / 7)
-    const { days } = buildDays({ planStart: w, phase, target: km, settings, paces, weekNo, minEasy })
+    const { days } = buildDays({ planStart: w, phase, target: km, settings, paces, weekNo, minEasy, rungs: { ...rungs }, easyWeek })
     weeks.push({
       weekStart: w,
       phase,
@@ -520,6 +589,7 @@ export function planBlock(inputs: PlanInputs & { current: WeekPlan; next: WeekPl
       rationale: [],
       readiness: inputs.next.readiness,
     })
+    if (!easyWeek && (phase === 'base' || phase === 'build' || phase === 'specific')) bump(weeks[weeks.length - 1])
   }
   if (daysBetween(today, raceDate) > MAX_WEEKS * 7) notes.push(`Showing the first ${MAX_WEEKS} weeks; the rest is planned as you get closer.`)
   const top = weeks.filter((w) => w.phase !== 'race').reduce((a, w) => (w.targetKm > a.targetKm ? w : a), weeks[0])

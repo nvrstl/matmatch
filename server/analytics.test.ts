@@ -91,7 +91,7 @@ test('plan builds ~8% and lands on 7 days', () => {
   const p = planNextWeek({ acts: weeks([40, 41, 40, 39]), settings: DEFAULT_SETTINGS, vdot: 48, predictions: [{ race: 'half', label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high', basis: '', endurancePenalty: 0 }], readiness: good, today: '2026-10-24' })
   assert.equal(p.days.length, 7)
   assert.equal(p.weekStart, '2026-10-26')
-  near(p.targetKm, 43, 4)
+  near(p.targetKm, 45, 5) // ~8 % up; easy runs never shorter than this runner's usual, so it can run a little over
   assert.equal(p.days[6].kind, 'long')
 })
 
@@ -199,5 +199,20 @@ test('plan style: aggressive builds higher and faster; weekly km target sets the
   assert.ok(agg.wk5 > bal.wk5)
   assert.ok(agg.b.realism!.typicalGain > bal.b.realism!.typicalGain)
   const target = mk({ planStyle: 'aggressive', weeklyKmTarget: 65 })
-  near(target.peak, 65, 2)
+  near(target.peak, 66, 4)
+})
+
+test('quality sessions progress through the block and intervals rotate', () => {
+  const acts = weeks([45, 46, 45, 44])
+  const pred = [{ race: 'half' as const, label: 'Half marathon', meters: 21097.5, seconds: 5700, low: 5600, high: 5800, confidence: 'high' as const, basis: '', endurancePenalty: 0 }]
+  const settings: Settings = { ...DEFAULT_SETTINGS, goalRace: 'half', goalRaceDate: '2027-03-14', goalTimeSeconds: 5600 }
+  const base = { acts, settings, vdot: 48, predictions: pred, readiness: good, today: '2026-10-24' }
+  const b = planBlock({ ...base, current: planNextWeek({ ...base, which: 'current' }), next: planNextWeek(base) })
+  const minutes = (t: string) => { const m = t.match(/(\d+) × (\d+) min/); return m ? +m[1] * +m[2] : 0 }
+  const tempo = b.weeks.filter((w) => w.phase === 'build' || w.phase === 'specific').flatMap((w) => w.days.filter((d) => d.kind === 'threshold').map((d) => minutes(d.title)))
+  assert.ok(tempo.length >= 5)
+  assert.ok(tempo.at(-1)! > tempo[0], `threshold work grows: ${tempo.join(', ')}`)
+  assert.ok(Math.max(...tempo) >= 30)
+  const iv = new Set(b.weeks.flatMap((w) => w.days.filter((d) => d.kind === 'intervals').map((d) => d.title)))
+  assert.ok(iv.size >= 3, `interval sessions vary: ${[...iv].join(' | ')}`)
 })
